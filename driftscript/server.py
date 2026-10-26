@@ -84,6 +84,11 @@ class ProxyRequest(BaseModel):
     scale: int = 1
 
 
+class RelevanceRequest(BaseModel):
+    annotations: Optional[List[Dict[str, Any]]] = None
+    clear: bool = False
+
+
 def get_or_create_video_proxy(file_path: Path, scale: int) -> Path:
     """
     Return the original video when `scale == 1`, or generate/reuse a downscaled (`1/2`, `1/4`, `1/16`)
@@ -283,6 +288,14 @@ async def api_cut_words(req: CutWordsRequest):
         indices=req.indices,
         deleted=req.deleted,
         sync_drift=req.sync_drift,
+    )
+
+
+@app.post("/api/words/relevance")
+async def api_words_relevance(req: RelevanceRequest):
+    return state.set_words_relevance(
+        annotations=req.annotations,
+        clear=req.clear,
     )
 
 

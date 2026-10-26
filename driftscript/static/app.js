@@ -67,6 +67,12 @@ const el = {
   searchInput: document.getElementById("search-input"),
   searchCount: document.getElementById("search-count"),
   btnSelectSearchMatches: document.getElementById("btn-select-search-matches"),
+  relEmptyTxt: document.getElementById("rel-empty-txt"),
+  relSegGreen: document.getElementById("rel-seg-green"),
+  relSegYellow: document.getElementById("rel-seg-yellow"),
+  relSegRed: document.getElementById("rel-seg-red"),
+  relSegBlue: document.getElementById("rel-seg-blue"),
+  btnClearRelevance: document.getElementById("btn-clear-relevance"),
   statusBanner: document.getElementById("status-banner"),
   transcriptContainer: document.getElementById("transcript-container"),
   statSummary: document.getElementById("stat-summary"),
@@ -203,7 +209,51 @@ function applyTranscriptState(data) {
   const spokenWords = state.words.filter((w) => w.kind === "word").length;
   const delCount = data.deleted_words_count || 0;
   el.statSummary.textContent = `${spokenWords} palavras • ${delCount} itens riscados • Novo: ${formatTimeShort(state.keptDuration)} (de ${formatTimeShort(state.sourceDuration)})`;
+  renderRelevanceMeter();
   renderTranscriptDOM();
+}
+
+function getRelevanceColorCSS(score) {
+  // Smooth gradient: 1.0 = Green (hue 138°), 0.5 = Yellow (hue 52°), 0.0 = Red (hue 0°)
+  const s = Math.max(0, Math.min(1, Number(score)));
+  const hue = Math.round(s * 138);
+  return `hsl(${hue}, 88%, 64%)`;
+}
+
+function renderRelevanceMeter() {
+  const spoken = state.words.filter((w) => w.kind === "word");
+  const annotated = spoken.filter(
+    (w) => w.relevance_score !== undefined && w.relevance_score !== null || w.relevance_category
+  );
+
+  if (!annotated.length) {
+    el.relEmptyTxt.classList.remove("hidden");
+    el.relSegGreen.style.width = "0%";
+    el.relSegYellow.style.width = "0%";
+    el.relSegRed.style.width = "0%";
+    el.relSegBlue.style.width = "0%";
+    el.btnClearRelevance.classList.add("hidden");
+    return;
+  }
+
+  el.relEmptyTxt.classList.add("hidden");
+  el.btnClearRelevance.classList.remove("hidden");
+
+  let nGreen = 0, nYellow = 0, nRed = 0, nBlue = 0;
+  for (const w of annotated) {
+    if (w.relevance_category === "off_topic") nBlue++;
+    else {
+      const sc = Number(w.relevance_score ?? 0.5);
+      if (sc >= 0.68) nGreen++;
+      else if (sc >= 0.38) nYellow++;
+      else nRed++;
+    }
+  }
+  const tot = Math.max(1, annotated.length);
+  el.relSegGreen.style.width = `${(nGreen / tot) * 100}%`;
+  el.relSegYellow.style.width = `${(nYellow / tot) * 100}%`;
+  el.relSegRed.style.width = `${(nRed / tot) * 100}%`;
+  el.relSegBlue.style.width = `${(nBlue / tot) * 100}%`;
 }
 
 /**
@@ -255,6 +305,18 @@ function renderTranscriptDOM() {
         // Se a próxima token for a cauda esticada (〰) desta palavra, cola sem espaço antes do 〰
         const nextIsStretch = nextW && nextW.kind === "stretch";
         span.textContent = nextIsStretch ? w.word : w.word + " ";
+
+        // Colorização de Relevância (Inicialmente vazio = texto branco)
+        if (!w.deleted) {
+          if (w.relevance_category === "off_topic") {
+            span.classList.add("is-off-topic");
+            span.title = `🔵 Fora do assunto / Desvio${w.relevance_reason ? ": " + w.relevance_reason : ""}`;
+          } else if (w.relevance_score !== undefined && w.relevance_score !== null) {
+            span.style.color = getRelevanceColorCSS(w.relevance_score);
+            const pct = Math.round(Number(w.relevance_score) * 100);
+            span.title = `Relevância: ${pct}%${w.relevance_reason ? " — " + w.relevance_reason : ""}`;
+          }
+        }
       }
 
       if (w.deleted) span.classList.add("is-deleted");
@@ -630,7 +692,9 @@ el.btnCopyPrompt.addEventListener("click", async () => {
     "   python3 /home/davi/repos/DriftScript/driftscript_cli.py chamar driftscript_cut_words '{\"indices\":[10,11],\"ranges\":[[20,25]],\"deleted\":true}'",
     "5. Desriscar (restaurar) índices:",
     "   python3 /home/davi/repos/DriftScript/driftscript_cli.py chamar driftscript_restore_words '{\"indices\":[10,11]}'",
-    "6. Ir para uma palavra específica no player e no Drift:",
+    "6. Colorir o Medidor de Relevância (score: 1.0=verde, 0.5=amarelo, 0.0=vermelho | category='off_topic'=azul para desvios/fora do assunto):",
+    "   python3 /home/davi/repos/DriftScript/driftscript_cli.py chamar driftscript_set_relevance '{\"annotations\":[{\"start_index\":0,\"end_index\":45,\"score\":0.95,\"category\":\"relevant\",\"reason\":\"Objetivo principal\"},{\"start_index\":46,\"end_index\":80,\"score\":0.0,\"category\":\"off_topic\",\"reason\":\"Desvio\"}]}'",
+    "7. Ir para uma palavra específica no player e no Drift:",
     "   python3 /home/davi/repos/DriftScript/driftscript_cli.py chamar driftscript_seek_word '{\"word_index\":50}'",
   ].join("\n");
 
@@ -701,7 +765,7 @@ el.btnRestoreSelected.addEventListener("click", () => {
   setWordsDeleted(Array.from(state.selectedIndices), false);
 });
 
-// SELECIONAR silêncios na faixa de comprimento escolhida (ou sílabas esticadas 〰)
+// SELECIONAR silêncios na faixa de comprimento escolhida (ou sílabas esticadas 〰 ou relevância)
 el.btnSelectPauses.addEventListener("click", () => {
   const val = el.selectPauseRange.value || "0.30-0.65";
   const keepEdges = el.chkKeepEdgeDots.checked;
@@ -715,6 +779,19 @@ el.btnSelectPauses.addEventListener("click", () => {
     });
     updateSelectionUI();
     showBanner(`${state.selectedIndices.size} sílabas esticadas (〰) selecionadas. Pressione Delete para encurtar ou Espaço para desriscar.`);
+    return;
+  }
+
+  if (val === "rel-red" || val === "rel-blue" || val === "rel-red-blue") {
+    state.words.forEach((w, idx) => {
+      const isBlue = w.relevance_category === "off_topic";
+      const isRed = !isBlue && w.relevance_score !== undefined && w.relevance_score !== null && Number(w.relevance_score) <= 0.38;
+      if ((val === "rel-red" && isRed) || (val === "rel-blue" && isBlue) || (val === "rel-red-blue" && (isRed || isBlue))) {
+        state.selectedIndices.add(idx);
+      }
+    });
+    updateSelectionUI();
+    showBanner(`${state.selectedIndices.size} tokens selecionados pelo Medidor de Relevância.`);
     return;
   }
 
@@ -753,6 +830,16 @@ el.btnSelectPauses.addEventListener("click", () => {
   showBanner(
     `${state.selectedIndices.size} partes de silêncio selecionadas (${groups.size} grupos). Pressione Delete para riscar ou Espaço / Botão Direito para desriscar.`
   );
+});
+
+el.btnClearRelevance.addEventListener("click", async () => {
+  const resp = await fetch("/api/words/relevance", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ clear: true }),
+  });
+  applyTranscriptState(await resp.json());
+  showBanner("Cores de relevância limpas (texto branco).");
 });
 
 el.btnUndo.addEventListener("click", async () => {

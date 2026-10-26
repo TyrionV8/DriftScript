@@ -231,6 +231,39 @@ MCP_TOOLS_SCHEMA: List[Dict[str, Any]] = [
         "description": "Force immediate synchronization of the current word cuts (`keep_ranges`) to the CutWire Drift timeline.",
         "inputSchema": {"type": "object", "properties": {}},
     },
+    {
+        "name": "driftscript_set_relevance",
+        "description": (
+            "Color the transcript Relevance Meter by assigning relevance scores (`score`: 1.0 = green/most relevant, "
+            "0.5 = yellow/moderate, 0.0 = red/least relevant) or `category='off_topic'` (blue = off-topic, tangents, interruptions) "
+            "to word index ranges `[start_index, end_index]`. Pass `clear=true` to reset all words back to white."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "annotations": {
+                    "type": "array",
+                    "description": "List of relevance segments: `{start_index, end_index, score (0.0..1.0), category ('relevant'|'off_topic'), reason}`.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "start_index": {"type": "integer"},
+                            "end_index": {"type": "integer"},
+                            "indices": {"type": "array", "items": {"type": "integer"}},
+                            "score": {"type": "number", "description": "0.0 (red, low relevance) to 0.5 (yellow) to 1.0 (green, high relevance)."},
+                            "category": {"type": "string", "enum": ["relevant", "off_topic"], "default": "relevant"},
+                            "reason": {"type": "string"},
+                        },
+                    },
+                },
+                "clear": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "If true, clears existing relevance colors (resets text to white) before applying any annotations.",
+                },
+            },
+        },
+    },
 ]
 
 
@@ -467,6 +500,18 @@ def execute_mcp_tool(state: DriftScriptState, name: str, args: Dict[str, Any]) -
             "kept_duration": full["kept_duration"],
             "cut_duration": full["cut_duration"],
             "keep_ranges_count": len(full["keep_ranges"]),
+        }
+
+    if name == "driftscript_set_relevance":
+        res = state.set_words_relevance(
+            annotations=args.get("annotations") or [],
+            clear=bool(args.get("clear", False)),
+        )
+        return {
+            "ok": True,
+            "action": "set_relevance",
+            "updated_relevance_count": res.get("updated_relevance_count", 0),
+            "total_words": res.get("total_words", 0),
         }
 
     return {"ok": False, "error": f"unknown_tool: {name}"}

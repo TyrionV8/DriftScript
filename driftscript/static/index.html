@@ -91,6 +91,9 @@
                 <option value="1.20-999">Silêncios ≥ 1.20s (Longos)</option>
                 <option value="2.15-999">Silêncios &gt; 4 traços (Tempo)</option>
                 <option value="stretch">Sílabas Esticadas (〰)</option>
+                <option value="rel-red">🔴 Pouco Relevantes (Vermelho)</option>
+                <option value="rel-blue">🔵 Fora do Assunto / Desvio (Azul)</option>
+                <option value="rel-red-blue">🔴+🔵 Pouco Relevantes + Desvios</option>
               </select>
               <label class="keep-edges-label" title="Quando marcado, seleciona apenas o miolo do silêncio, preservando o primeiro e o último pontinho (•) como almofada natural">
                 <input type="checkbox" id="chk-keep-edge-dots" checked />
@@ -106,6 +109,19 @@
           </div>
 
           <div class="doc-tools-right">
+            <!-- Medidor de Relevância (Inicialmente vazio / texto branco) -->
+            <div class="relevance-meter-widget" id="relevance-widget" title="Medidor de Relevância por IA: Verde (relevante) → Amarelo → Vermelho (pouco relevante) | Azul (fora do assunto/desvio)">
+              <span class="rel-label">Relevância:</span>
+              <div class="rel-bar-track" id="rel-bar-track">
+                <span class="rel-empty-txt" id="rel-empty-txt">Vazio (Branco)</span>
+                <div id="rel-seg-green" class="rel-seg seg-green" style="width:0%"></div>
+                <div id="rel-seg-yellow" class="rel-seg seg-yellow" style="width:0%"></div>
+                <div id="rel-seg-red" class="rel-seg seg-red" style="width:0%"></div>
+                <div id="rel-seg-blue" class="rel-seg seg-blue" style="width:0%"></div>
+              </div>
+              <button id="btn-clear-relevance" type="button" class="btn-doc btn-rel-clear hidden" title="Limpar cores de relevância (voltar texto para branco)">✕</button>
+            </div>
+
             <input type="text" id="search-input" class="search-minimal" placeholder="Buscar..." />
             <button id="btn-select-search-matches" type="button" class="btn-doc hidden" title="Selecionar todas as ocorrências da busca">
               Selecionar (<span id="search-count">0</span>)

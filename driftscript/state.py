@@ -110,6 +110,15 @@ class DriftScriptState:
         if not self.file_path or not self.words:
             return
         sf = self._state_file_path(self.file_path)
+        relevance_map = {
+            str(w["index"]): {
+                "score": w.get("relevance_score"),
+                "category": w.get("relevance_category"),
+                "reason": w.get("relevance_reason"),
+            }
+            for w in self.words
+            if w.get("relevance_score") is not None or w.get("relevance_category") is not None
+        }
         payload = {
             "asset_id": self.asset_id,
             "file_path": self.file_path,
@@ -121,6 +130,7 @@ class DriftScriptState:
             "auto_sync_drift": self.auto_sync_drift,
             "deleted_indices": [w["index"] for w in self.words if w.get("deleted", False)],
             "deleted_pauses": self.deleted_pauses,
+            "relevance_map": relevance_map,
             "last_updated": time.time(),
         }
         try:
@@ -143,8 +153,18 @@ class DriftScriptState:
             with open(sf, "r", encoding="utf-8") as f:
                 data = json.load(f)
             del_set = set(data.get("deleted_indices", []))
+            rel_map = data.get("relevance_map", {})
             for w in self.words:
                 w["deleted"] = w["index"] in del_set
+                rel = rel_map.get(str(w["index"]))
+                if rel:
+                    w["relevance_score"] = rel.get("score")
+                    w["relevance_category"] = rel.get("category")
+                    w["relevance_reason"] = rel.get("reason")
+                else:
+                    w.pop("relevance_score", None)
+                    w.pop("relevance_category", None)
+                    w.pop("relevance_reason", None)
             self.deleted_pauses = data.get("deleted_pauses", [])
             self.padding_sec = float(data.get("padding_sec", self.padding_sec))
             self.last_updated = mtime
@@ -191,11 +211,19 @@ class DriftScriptState:
                 with open(sf, "r", encoding="utf-8") as f:
                     saved = json.load(f)
                 saved_del = set(saved.get("deleted_indices", []))
+                rel_map = saved.get("relevance_map", {})
                 if saved_del:
                     for w in self.words:
                         w["deleted"] = w["index"] in saved_del
                     self.deleted_pauses = saved.get("deleted_pauses", [])
                     restored_from_session = True
+                if rel_map:
+                    for w in self.words:
+                        rel = rel_map.get(str(w["index"]))
+                        if rel:
+                            w["relevance_score"] = rel.get("score")
+                            w["relevance_category"] = rel.get("category")
+                            w["relevance_reason"] = rel.get("reason")
             except Exception:
                 pass
 
@@ -237,6 +265,60 @@ class DriftScriptState:
         state = self.get_full_state()
         state["changed_words"] = changed
         state["drift_sync"] = drift_sync_result
+        return state
+
+    def set_words_relevance(
+        self,
+        annotations: Optional[List[Dict[str, Any]]] = None,
+        clear: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Assign relevance scores (`0.0` red -> `0.5` yellow -> `1.0` green) or `category='off_topic'` (blue)
+        to word ranges `[start_index, end_index]` or `indices`. Pass `clear=True` to reset all words to white.
+        """
+        self.reload_session_flags_from_disk()
+        if not self.words:
+            return {"ok": False, "error": "no_transcript_loaded"}
+
+        if clear:
+            for w in self.words:
+                w.pop("relevance_score", None)
+                w.pop("relevance_category", None)
+                w.pop("relevance_reason", None)
+
+        updated = 0
+        if annotations:
+            for item in annotations:
+                cat = str(item.get("category") or "relevant").strip().lower()
+                if cat in ("blue", "off_topic", "desvio", "fora_do_assunto", "interrupcao"):
+                    cat = "off_topic"
+                score_raw = item.get("score")
+                score = round(max(0.0, min(1.0, float(score_raw))), 3) if score_raw is not None else (0.0 if cat == "off_topic" else 0.5)
+                reason = str(item.get("reason") or "").strip() or None
+
+                target_idxs = set()
+                if "indices" in item and isinstance(item["indices"], list):
+                    for idx in item["indices"]:
+                        target_idxs.add(int(idx))
+                if "start_index" in item and "end_index" in item:
+                    a, b = int(item["start_index"]), int(item["end_index"])
+                    if a > b:
+                        a, b = b, a
+                    for idx in range(a, b + 1):
+                        target_idxs.add(idx)
+
+                for idx in target_idxs:
+                    if 0 <= idx < len(self.words):
+                        self.words[idx]["relevance_score"] = score
+                        self.words[idx]["relevance_category"] = cat
+                        if reason:
+                            self.words[idx]["relevance_reason"] = reason
+                        updated += 1
+
+        self.save_session()
+        self.last_updated = time.time()
+        state = self.get_full_state()
+        state["updated_relevance_count"] = updated
         return state
 
     def toggle_pause_deleted(
