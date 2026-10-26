@@ -77,9 +77,10 @@ body {
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 5px 8px;
-  font-size: 12px;
-  max-width: 210px;
+  padding: 6px 12px;
+  font-size: 13px;
+  min-width: 280px;
+  max-width: 430px;
   outline: none;
 }
 
@@ -297,14 +298,38 @@ body {
   opacity: 0.35;
   cursor: default;
 }
+.space-effect-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.space-tag {
+  font-size: 10px;
+  opacity: 0.9;
+  font-weight: 700;
+  margin-left: 2px;
+}
+
 .btn-doc.btn-cut {
   color: #fda4af;
   border-color: rgba(244, 63, 94, 0.35);
-  background: rgba(244, 63, 94, 0.12);
+  background: rgba(244, 63, 94, 0.10);
 }
 .btn-doc.btn-cut:hover {
   background: rgba(244, 63, 94, 0.22);
 }
+.btn-doc.btn-cut.space-mode-active {
+  background: rgba(244, 63, 94, 0.28);
+  border-color: #f43f5e;
+  color: #fff;
+  box-shadow: 0 0 8px rgba(244, 63, 94, 0.35);
+}
+
 .btn-doc.btn-select-range {
   color: #c4b5fd;
   border-color: rgba(139, 92, 246, 0.4);
@@ -312,6 +337,44 @@ body {
 }
 .btn-doc.btn-select-range:hover {
   background: rgba(139, 92, 246, 0.25);
+}
+
+.accel-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.btn-doc.btn-accel {
+  color: #67e8f9;
+  border-color: rgba(6, 182, 212, 0.35);
+  background: rgba(6, 182, 212, 0.10);
+}
+.btn-doc.btn-accel:hover {
+  background: rgba(6, 182, 212, 0.24);
+}
+.btn-doc.btn-accel.space-mode-active {
+  background: rgba(6, 182, 212, 0.28);
+  border-color: #22d3ee;
+  color: #fff;
+  box-shadow: 0 0 8px rgba(6, 182, 212, 0.35);
+}
+
+/* Trecho acelerado (em vez de cortado) */
+.word-tok.is-accelerated {
+  border-bottom: 2px dashed #22d3ee;
+  background: rgba(6, 182, 212, 0.11);
+}
+
+.accel-badge {
+  font-size: 10px;
+  font-family: monospace;
+  color: #22d3ee;
+  background: rgba(6, 182, 212, 0.2);
+  padding: 0 3px;
+  border-radius: 3px;
+  margin-right: 2px;
+  vertical-align: middle;
 }
 
 .keep-edges-label,
@@ -427,20 +490,21 @@ body {
   scrollbar-color: #3b4459 #12151c;
 }
 
-/* Barra de rolagem mais grossa, justa na borda esquerda e condizente com a interface */
+/* Barra de rolagem QUADRADA, mais larga e justa na borda esquerda */
 .doc-content::-webkit-scrollbar {
-  width: 14px;
+  width: 22px;
 }
 
 .doc-content::-webkit-scrollbar-track {
   background: #12151c;
   border-right: 1px solid var(--border);
+  border-radius: 0;
 }
 
 .doc-content::-webkit-scrollbar-thumb {
   background: #333c4d;
-  border-radius: 7px;
-  border: 2px solid #12151c;
+  border-radius: 0;
+  border: 1px solid #1e2430;
 }
 
 .doc-content::-webkit-scrollbar-thumb:hover {
@@ -667,7 +731,7 @@ kbd {
   flex-shrink: 0;
 }
 
-.vc-left, .vc-right {
+.vc-left, .vc-center, .vc-right {
   display: flex;
   align-items: center;
   gap: 8px;

@@ -478,9 +478,9 @@ def _try_load_cached_transcript(file_path: Path, profile_id: str) -> Optional[Di
         except Exception as e:
             logger.warning(f"Failed reading cache {own_cache}: {e}")
 
-    # Check legacy CutScript cache for instant migration + acoustic tightening + stretch + pause tokens
+    # Check legacy CutScript cache ONLY for models matching this specific profile
     profile = WHISPER_PROFILES.get(profile_id, WHISPER_PROFILES["normal"])
-    candidate_models = profile.get("legacy_cache_models", []) + ["large", "medium", "small", "base"]
+    candidate_models = profile.get("legacy_cache_models", [])
     for m_name in candidate_models:
         legacy_file = LEGACY_CUTSCRIPT_CACHE_DIR / f"{sig}_{m_name}_transcribe_wx.json"
         if legacy_file.exists():

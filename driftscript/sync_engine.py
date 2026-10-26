@@ -305,12 +305,6 @@ def compute_keep_and_deleted_ranges(
                     }
                 )
 
-    if not raw_cuts:
-        return {
-            "deleted_ranges": [],
-            "keep_ranges": [{"start": 0.0, "end": round(dur, 4)}],
-        }
-
     # 3. Sort and merge overlapping or nearly-touching (< 0.04s) cut intervals
     raw_cuts.sort(key=lambda r: (r["start"], r["end"]))
     merged_cuts: List[Dict[str, Any]] = []
@@ -325,18 +319,76 @@ def compute_keep_and_deleted_ranges(
             else:
                 merged_cuts.append(dict(cut))
 
-    # 4. Complement `merged_cuts` against `[0.0, dur]` to produce `keep_ranges`
-    keep_ranges: List[Dict[str, float]] = []
+    # 4. Complement `merged_cuts` against `[0.0, dur]` to produce base `keep_ranges`
+    base_keep_ranges: List[Dict[str, float]] = []
     cursor = 0.0
     for cut in merged_cuts:
         if cut["start"] - cursor >= 0.05:
-            keep_ranges.append({"start": round(cursor, 4), "end": round(cut["start"], 4)})
+            base_keep_ranges.append({"start": round(cursor, 4), "end": round(cut["start"], 4), "speed": 1.0})
         cursor = max(cursor, cut["end"])
 
     if dur - cursor >= 0.05:
-        keep_ranges.append({"start": round(cursor, 4), "end": round(dur, 4)})
+        base_keep_ranges.append({"start": round(cursor, 4), "end": round(dur, 4), "speed": 1.0})
+
+    # 5. Collect accelerated non-deleted runs (`speed > 1.01`) and subdivide `base_keep_ranges`
+    speed_ranges: List[Dict[str, Any]] = []
+    j = 0
+    while j < n:
+        w = words[j]
+        spd = float(w.get("speed", 1.0) or 1.0)
+        if w.get("deleted", False) or spd <= 1.01:
+            j += 1
+            continue
+        s_run_start = j
+        while (
+            j + 1 < n
+            and not words[j + 1].get("deleted", False)
+            and abs(float(words[j + 1].get("speed", 1.0) or 1.0) - spd) < 0.05
+        ):
+            j += 1
+        s_run_end = j
+        sr_start = round(float(words[s_run_start]["start"]), 4)
+        sr_end = round(float(words[s_run_end]["end"]), 4)
+        if sr_end - sr_start >= 0.04:
+            speed_ranges.append(
+                {
+                    "start": sr_start,
+                    "end": sr_end,
+                    "speed": round(spd, 2),
+                    "word_indices": list(range(s_run_start, s_run_end + 1)),
+                }
+            )
+        j += 1
+
+    if not speed_ranges:
+        return {
+            "deleted_ranges": merged_cuts,
+            "keep_ranges": base_keep_ranges,
+            "speed_ranges": [],
+        }
+
+    # Subdivide `base_keep_ranges` by `speed_ranges` so each segment in `keep_ranges` has its exact playback speed
+    final_keep_ranges: List[Dict[str, float]] = []
+    for kr in base_keep_ranges:
+        k_start = kr["start"]
+        k_end = kr["end"]
+        cur = k_start
+        for sr in speed_ranges:
+            if sr["end"] <= cur + 0.03 or sr["start"] >= k_end - 0.03:
+                continue
+            ov_s = max(cur, sr["start"])
+            ov_e = min(k_end, sr["end"])
+            if ov_e - ov_s < 0.04:
+                continue
+            if ov_s - cur >= 0.04:
+                final_keep_ranges.append({"start": round(cur, 4), "end": round(ov_s, 4), "speed": 1.0})
+            final_keep_ranges.append({"start": round(ov_s, 4), "end": round(ov_e, 4), "speed": sr["speed"]})
+            cur = ov_e
+        if k_end - cur >= 0.04:
+            final_keep_ranges.append({"start": round(cur, 4), "end": round(k_end, 4), "speed": 1.0})
 
     return {
         "deleted_ranges": merged_cuts,
-        "keep_ranges": keep_ranges,
+        "keep_ranges": final_keep_ranges,
+        "speed_ranges": speed_ranges,
     }

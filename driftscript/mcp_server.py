@@ -264,6 +264,22 @@ MCP_TOOLS_SCHEMA: List[Dict[str, Any]] = [
             },
         },
     },
+    {
+        "name": "driftscript_accelerate_words",
+        "description": (
+            "Accelerate (speed up: 2x, 4x, 8x, 16x, 32x) words, silences (`•`/`—`), or stretched syllables (`〰`) "
+            "by index or `[start_index, end_index]` ranges instead of cutting them, preserving video fluidity while shortening duration."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "indices": {"type": "array", "items": {"type": "integer"}},
+                "ranges": {"type": "array", "items": {"type": "array", "items": {"type": "integer"}}},
+                "speed": {"type": "number", "default": 2.0, "description": "Playback multiplier (2, 4, 8, 16, 32, or 1.0 to reset)."},
+                "sync_drift": {"type": "boolean", "default": True},
+            },
+        },
+    },
 ]
 
 
@@ -512,6 +528,25 @@ def execute_mcp_tool(state: DriftScriptState, name: str, args: Dict[str, Any]) -
             "action": "set_relevance",
             "updated_relevance_count": res.get("updated_relevance_count", 0),
             "total_words": res.get("total_words", 0),
+        }
+
+    if name == "driftscript_accelerate_words":
+        target_indices = _expand_indices_and_ranges(args.get("indices"), args.get("ranges"))
+        if not target_indices:
+            return {"ok": False, "error": "no_indices_provided", "message": "Forneça `indices` ou `ranges` para acelerar."}
+        spd = float(args.get("speed", 1.5))
+        res = state.set_words_speed(
+            indices=target_indices,
+            speed=spd,
+            sync_drift=args.get("sync_drift", True),
+        )
+        return {
+            "ok": True,
+            "action": f"accelerate_words ({spd}x)",
+            "accelerated_count": len(target_indices),
+            "kept_duration": res["kept_duration"],
+            "cut_duration": res["cut_duration"],
+            "drift_sync": res.get("drift_sync"),
         }
 
     return {"ok": False, "error": f"unknown_tool: {name}"}

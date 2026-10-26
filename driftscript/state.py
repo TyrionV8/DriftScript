@@ -119,18 +119,25 @@ class DriftScriptState:
             for w in self.words
             if w.get("relevance_score") is not None or w.get("relevance_category") is not None
         }
+        speed_map = {
+            str(w["index"]): round(float(w.get("speed", 1.0)), 2)
+            for w in self.words
+            if abs(float(w.get("speed", 1.0) or 1.0) - 1.0) > 0.01
+        }
         payload = {
             "asset_id": self.asset_id,
             "file_path": self.file_path,
             "source_duration": self.source_duration,
             "profile": self.profile,
             "language": self.language,
+            "words_count": len(self.words),
             "padding_sec": self.padding_sec,
             "declick_sec": self.declick_sec,
             "auto_sync_drift": self.auto_sync_drift,
             "deleted_indices": [w["index"] for w in self.words if w.get("deleted", False)],
             "deleted_pauses": self.deleted_pauses,
             "relevance_map": relevance_map,
+            "speed_map": speed_map,
             "last_updated": time.time(),
         }
         try:
@@ -154,8 +161,10 @@ class DriftScriptState:
                 data = json.load(f)
             del_set = set(data.get("deleted_indices", []))
             rel_map = data.get("relevance_map", {})
+            spd_map = data.get("speed_map", {})
             for w in self.words:
                 w["deleted"] = w["index"] in del_set
+                w["speed"] = float(spd_map.get(str(w["index"]), 1.0))
                 rel = rel_map.get(str(w["index"]))
                 if rel:
                     w["relevance_score"] = rel.get("score")
@@ -174,6 +183,11 @@ class DriftScriptState:
     def _push_undo(self) -> None:
         snapshot = {
             "deleted_indices": [w["index"] for w in self.words if w.get("deleted", False)],
+            "speed_map": {
+                str(w["index"]): float(w.get("speed", 1.0))
+                for w in self.words
+                if abs(float(w.get("speed", 1.0) or 1.0) - 1.0) > 0.01
+            },
             "deleted_pauses": copy.deepcopy(self.deleted_pauses),
         }
         self.undo_stack.append(snapshot)
@@ -187,6 +201,7 @@ class DriftScriptState:
         asset_id: Optional[str] = None,
         source_duration: Optional[float] = None,
         drift_clips: Optional[List[Dict[str, Any]]] = None,
+        reset_session: bool = False,
     ) -> Dict[str, Any]:
         self.file_path = transcript_data["file_path"]
         self.asset_id = asset_id or self.asset_id
@@ -203,31 +218,35 @@ class DriftScriptState:
         elif self.words:
             self.source_duration = max(float(self.words[-1]["end"]) + 1.0, self.source_duration)
 
-        # Restore saved session deletions if present, otherwise inspect current Drift timeline cuts
+        # Restore saved session deletions if present (unless reset_session=True or token count changed)
         sf = self._state_file_path(self.file_path)
         restored_from_session = False
-        if sf.exists():
+        if not reset_session and sf.exists():
             try:
                 with open(sf, "r", encoding="utf-8") as f:
                     saved = json.load(f)
-                saved_del = set(saved.get("deleted_indices", []))
-                rel_map = saved.get("relevance_map", {})
-                if saved_del:
-                    for w in self.words:
-                        w["deleted"] = w["index"] in saved_del
-                    self.deleted_pauses = saved.get("deleted_pauses", [])
-                    restored_from_session = True
-                if rel_map:
-                    for w in self.words:
-                        rel = rel_map.get(str(w["index"]))
-                        if rel:
-                            w["relevance_score"] = rel.get("score")
-                            w["relevance_category"] = rel.get("category")
-                            w["relevance_reason"] = rel.get("reason")
+                saved_count = saved.get("words_count", len(self.words))
+                if saved_count == len(self.words):
+                    saved_del = set(saved.get("deleted_indices", []))
+                    rel_map = saved.get("relevance_map", {})
+                    spd_map = saved.get("speed_map", {})
+                    if saved_del or spd_map:
+                        for w in self.words:
+                            w["deleted"] = w["index"] in saved_del
+                            w["speed"] = float(spd_map.get(str(w["index"]), 1.0))
+                        self.deleted_pauses = saved.get("deleted_pauses", [])
+                        restored_from_session = True
+                    if rel_map:
+                        for w in self.words:
+                            rel = rel_map.get(str(w["index"]))
+                            if rel:
+                                w["relevance_score"] = rel.get("score")
+                                w["relevance_category"] = rel.get("category")
+                                w["relevance_reason"] = rel.get("reason")
             except Exception:
                 pass
 
-        if not restored_from_session and drift_clips:
+        if not reset_session and not restored_from_session and drift_clips:
             cut_idxs = set(detect_cut_words_from_timeline_clips(self.words, drift_clips))
             for w in self.words:
                 w["deleted"] = w["index"] in cut_idxs
@@ -250,8 +269,52 @@ class DriftScriptState:
         idx_set = set(int(i) for i in indices if 0 <= int(i) < len(self.words))
         changed = 0
         for idx in idx_set:
-            if bool(self.words[idx].get("deleted", False)) != bool(deleted):
-                self.words[idx]["deleted"] = bool(deleted)
+            w = self.words[idx]
+            if bool(w.get("deleted", False)) != bool(deleted):
+                w["deleted"] = bool(deleted)
+                changed += 1
+            if not deleted and abs(float(w.get("speed", 1.0) or 1.0) - 1.0) > 0.01:
+                w["speed"] = 1.0
+                changed += 1
+
+        self.save_session()
+        self.last_updated = time.time()
+
+        should_sync = self.auto_sync_drift if sync_drift is None else bool(sync_drift)
+        drift_sync_result = None
+        if should_sync and self.asset_id:
+            drift_sync_result = self.sync_to_drift()
+
+        state = self.get_full_state()
+        state["changed_words"] = changed
+        state["drift_sync"] = drift_sync_result
+        return state
+
+    def set_words_speed(
+        self,
+        indices: List[int],
+        speed: float = 1.5,
+        sync_drift: Optional[bool] = None,
+    ) -> Dict[str, Any]:
+        """
+        Accelerate (or reset to 1.0x) selected words, silences (`•`/`—`), or stretched syllables (`〰`)
+        instead of cutting them, improving video fluidity while reducing duration.
+        """
+        self.reload_session_flags_from_disk()
+        if not self.words:
+            return {"ok": False, "error": "no_transcript_loaded"}
+
+        self._push_undo()
+        spd = round(max(0.5, min(32.0, float(speed or 1.0))), 2)
+        idx_set = set(int(i) for i in indices if 0 <= int(i) < len(self.words))
+        changed = 0
+        for idx in idx_set:
+            w = self.words[idx]
+            if spd > 1.01 and w.get("deleted", False):
+                w["deleted"] = False
+                changed += 1
+            if abs(float(w.get("speed", 1.0) or 1.0) - spd) > 0.01:
+                w["speed"] = spd
                 changed += 1
 
         self.save_session()
@@ -366,13 +429,20 @@ class DriftScriptState:
             return self.get_full_state()
         current = {
             "deleted_indices": [w["index"] for w in self.words if w.get("deleted", False)],
+            "speed_map": {
+                str(w["index"]): float(w.get("speed", 1.0))
+                for w in self.words
+                if abs(float(w.get("speed", 1.0) or 1.0) - 1.0) > 0.01
+            },
             "deleted_pauses": copy.deepcopy(self.deleted_pauses),
         }
         self.redo_stack.append(current)
         prev = self.undo_stack.pop()
         del_set = set(prev["deleted_indices"])
+        spd_map = prev.get("speed_map", {})
         for w in self.words:
             w["deleted"] = w["index"] in del_set
+            w["speed"] = float(spd_map.get(str(w["index"]), 1.0))
         self.deleted_pauses = prev["deleted_pauses"]
         self.save_session()
         self.last_updated = time.time()
@@ -385,13 +455,20 @@ class DriftScriptState:
             return self.get_full_state()
         current = {
             "deleted_indices": [w["index"] for w in self.words if w.get("deleted", False)],
+            "speed_map": {
+                str(w["index"]): float(w.get("speed", 1.0))
+                for w in self.words
+                if abs(float(w.get("speed", 1.0) or 1.0) - 1.0) > 0.01
+            },
             "deleted_pauses": copy.deepcopy(self.deleted_pauses),
         }
         self.undo_stack.append(current)
         nxt = self.redo_stack.pop()
         del_set = set(nxt["deleted_indices"])
+        spd_map = nxt.get("speed_map", {})
         for w in self.words:
             w["deleted"] = w["index"] in del_set
+            w["speed"] = float(spd_map.get(str(w["index"]), 1.0))
         self.deleted_pauses = nxt["deleted_pauses"]
         self.save_session()
         self.last_updated = time.time()
@@ -526,7 +603,13 @@ class DriftScriptState:
                     drift_clips = asset_obj.get("clips", [])
 
         deleted_count = sum(1 for w in self.words if w.get("deleted", False))
-        kept_duration = sum(r["end"] - r["start"] for r in ranges_info["keep_ranges"])
+        accel_count = sum(
+            1 for w in self.words if not w.get("deleted", False) and float(w.get("speed", 1.0) or 1.0) > 1.01
+        )
+        kept_duration = sum(
+            (r["end"] - r["start"]) / max(0.25, float(r.get("speed", 1.0) or 1.0))
+            for r in ranges_info["keep_ranges"]
+        )
         cut_duration = max(0.0, self.source_duration - kept_duration)
 
         return {
@@ -543,6 +626,7 @@ class DriftScriptState:
             "auto_sync_drift": self.auto_sync_drift,
             "total_words": len(self.words),
             "deleted_words_count": deleted_count,
+            "accelerated_words_count": accel_count,
             "deleted_pauses": self.deleted_pauses,
             "can_undo": len(self.undo_stack) > 0,
             "can_redo": len(self.redo_stack) > 0,
@@ -550,5 +634,6 @@ class DriftScriptState:
             "segments": segments,
             "deleted_ranges": ranges_info["deleted_ranges"],
             "keep_ranges": ranges_info["keep_ranges"],
+            "speed_ranges": ranges_info.get("speed_ranges", []),
             "drift_clips": drift_clips or [],
         }

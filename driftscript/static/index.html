@@ -16,12 +16,6 @@
         <select id="asset-select" class="clip-select" title="Clipe aberto no Drift">
           <option value="">Carregando clipe...</option>
         </select>
-        <!-- Indicativo em destaque do Novo Comprimento do Vídeo -->
-        <div class="duration-pill" id="duration-pill" title="Novo comprimento estimado do vídeo após cortes">
-          <span>Novo comprimento:</span>
-          <strong id="new-duration-val">--:--</strong>
-          <small id="orig-duration-val">(de --:--)</small>
-        </div>
       </div>
 
       <!-- Seletor Whisper com Memória Visível (Persiste o último usado) -->
@@ -37,7 +31,7 @@
             Heavy <small>4.8 GB</small>
           </button>
         </div>
-        <button id="btn-transcribe" type="button" class="btn-top btn-primary">Transcrever</button>
+        <button id="btn-transcribe" type="button" class="btn-top btn-primary" title="Refazer a transcrição do vídeo com o modelo selecionado">Transcrever</button>
       </div>
 
       <!-- Memória GPU Visível + Prompt IA + Sync -->
@@ -66,7 +60,7 @@
       </div>
     </header>
 
-    <!-- ÁREA PRINCIPAL: TEXTO COM MARGEM JUSTA E SCROLL À ESQUERDA + VÍDEO GRANDE À DIREITA -->
+    <!-- ÁREA PRINCIPAL: TEXTO COM MARGEM JUSTA E SCROLL QUADRADO E LARGO À ESQUERDA + VÍDEO GRANDE À DIREITA -->
     <main class="main-split">
       <!-- ESQUERDA: Documento de Texto Limpo (Estilo Descript) -->
       <section class="doc-pane">
@@ -74,15 +68,36 @@
           <div class="doc-tools-left">
             <button id="btn-undo" type="button" class="btn-doc" title="Desfazer (Ctrl+Z)" disabled>↶</button>
             <button id="btn-redo" type="button" class="btn-doc" title="Refazer (Ctrl+Y)" disabled>↷</button>
-            <button id="btn-cut-selected" type="button" class="btn-doc btn-cut" title="Riscar selecionadas (Tecla Delete / Backspace)">
-              Riscar (<span id="sel-count">0</span>)
-            </button>
-            <button id="btn-restore-selected" type="button" class="btn-doc" title="Desriscar selecionadas (Barra de Espaço ou Botão Direito)">
+
+            <!-- SELETOR DE MODO DA BARRA DE ESPAÇO: RISCAR OU ACELERAR -->
+            <div class="space-effect-group" title="Escolha qual botão será acionado ao pressionar a Barra de Espaço sobre a seleção">
+              <button id="btn-cut-selected" type="button" class="btn-doc btn-cut space-mode-active" title="Selecionar 'Riscar' como efeito da Barra de Espaço (alterna entre riscado e não riscado em toda a seleção)">
+                ✂ Riscar <span class="space-tag" id="tag-space-cut">[Espaço]</span>
+              </button>
+              <div class="accel-group" title="Selecionar 'Acelerar' como efeito da Barra de Espaço (2x, 4x, 8x, 16x ou 32x)">
+                <button id="btn-accel-selected" type="button" class="btn-doc btn-accel" title="Selecionar 'Acelerar' como efeito da Barra de Espaço">
+                  ⚡ Acelerar <span class="space-tag hidden" id="tag-space-accel">[Espaço]</span>
+                </button>
+                <select id="select-accel-speed" class="pause-select" title="Velocidade de aceleração">
+                  <option value="2" selected>2x</option>
+                  <option value="4">4x</option>
+                  <option value="8">8x</option>
+                  <option value="16">16x</option>
+                  <option value="32">32x</option>
+                </select>
+              </div>
+            </div>
+
+            <button id="btn-restore-selected" type="button" class="btn-doc" title="Desriscar e voltar velocidade para 1x na seleção (ou clique com Botão Direito)">
               Desriscar
             </button>
 
+            <button id="btn-clear-selection" type="button" class="btn-doc" title="Limpar seleção atual (Esc)">
+              Seleção (<span id="sel-count">0</span>) ✕
+            </button>
+
             <!-- SELECIONAR silêncios por faixa de comprimento (ou sílabas esticadas) -->
-            <div class="pause-cut-group" title="Selecionar silêncios na faixa de comprimento escolhida (depois pressione Delete para riscar ou Espaço para desriscar)">
+            <div class="pause-cut-group" title="Selecionar silêncios na faixa de comprimento escolhida (depois pressione Barra de Espaço para aplicar Riscar ou Acelerar)">
               <select id="select-pause-range" class="pause-select">
                 <option value="0.10-999">Silêncios ≥ 0.10s (Todos)</option>
                 <option value="0.10-0.30">Silêncios 0.10s – 0.30s (Curtos)</option>
@@ -101,11 +116,6 @@
               </label>
               <button id="btn-select-pauses" type="button" class="btn-doc btn-select-range">Selecionar</button>
             </div>
-
-            <label class="click-mode-label" title="Quando ativo, basta 1 clique esquerdo para riscar">
-              <input type="checkbox" id="chk-one-click-cut" />
-              <span>1-clique risca</span>
-            </label>
           </div>
 
           <div class="doc-tools-right">
@@ -131,7 +141,7 @@
 
         <div id="status-banner" class="status-banner hidden"></div>
 
-        <!-- PÁGINA DE TEXTO COM MARGEM JUSTA E BARRA DE ROLAGEM GROSSA À ESQUERDA -->
+        <!-- PÁGINA DE TEXTO COM MARGEM JUSTA E BARRA DE ROLAGEM QUADRADA E LARGA À ESQUERDA -->
         <div id="transcript-container" class="doc-content" tabindex="0">
           <p class="empty-msg">Carregando transcrição...</p>
         </div>
@@ -139,7 +149,7 @@
         <footer class="doc-footer">
           <span id="stat-summary">0 palavras • 0 riscadas</span>
           <span class="hint-text">
-            Clique: ir ao trecho • <kbd>Del</kbd>: riscar • <kbd>Espaço</kbd> ou <strong>Botão Direito</strong>: desriscar • Apague só alguns <kbd>•</kbd> / <kbd>—</kbd> para cortar parte do silêncio
+            Clique Esq: seleciona/desseleciona • <kbd>Espaço</kbd>: alterna Riscar/Acelerar na seleção • <strong>▶ Play</strong>: toca a seleção em loop • <strong>Botão Direito</strong>: desrisca
           </span>
         </footer>
       </section>
@@ -155,13 +165,13 @@
           <div id="progress-fill" class="timeline-fill"></div>
         </div>
 
-        <!-- Controles do Player: Recomeçar do Zero, Play/Pause, 2x, Resolução (1x, 1/2, 1/4, 1/16), Tempo -->
+        <!-- Controles do Player: Recomeçar do Zero, Play/Pause (Loop na seleção), 2x, Resolução, Novo Comprimento e Tempo -->
         <div class="video-controls">
           <div class="vc-left">
-            <button id="btn-restart" type="button" class="btn-vc" title="Recomeçar a tocar o vídeo do zero">
+            <button id="btn-restart" type="button" class="btn-vc" title="Recomeçar a tocar o vídeo inteiro do zero">
               ⏮ Do Zero
             </button>
-            <button id="btn-play-pause" type="button" class="btn-vc btn-vc-primary" title="Play / Pause">
+            <button id="btn-play-pause" type="button" class="btn-vc btn-vc-primary" title="Play / Pause (toca apenas a seleção em loop quando houver itens selecionados)">
               ▶ Play
             </button>
             <button id="btn-speed-2x" type="button" class="btn-vc btn-speed" title="Alternar velocidade 2x">
@@ -172,6 +182,15 @@
               <button type="button" class="r-pill" data-scale="2">1/2</button>
               <button type="button" class="r-pill" data-scale="4">1/4</button>
               <button type="button" class="r-pill" data-scale="16">1/16</button>
+            </div>
+          </div>
+
+          <!-- Indicativo em destaque do Novo Comprimento do Vídeo (abaixo do vídeo) -->
+          <div class="vc-center">
+            <div class="duration-pill" id="duration-pill" title="Novo comprimento estimado do vídeo após cortes e acelerações">
+              <span>Novo comprimento:</span>
+              <strong id="new-duration-val">--:--</strong>
+              <small id="orig-duration-val">(de --:--)</small>
             </div>
           </div>
 

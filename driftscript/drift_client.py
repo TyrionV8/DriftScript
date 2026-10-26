@@ -222,26 +222,36 @@ class DriftMCPClient:
         primary_clip = clips[0]
         extra_clips = clips[1:]
 
-        # Sanitize and merge micro-gaps (< 0.025s) in keep_ranges
+        # Sanitize and merge micro-gaps (< 0.025s) in keep_ranges only when speed matches
         valid_ranges: List[Dict[str, float]] = []
         for r in keep_ranges:
             s = round(max(0.0, float(r["start"])), 4)
             e = round(float(r["end"]), 4)
+            spd = round(float(r.get("speed", 1.0) or 1.0), 2)
             if e - s < 0.04:
                 continue
-            if valid_ranges and (s - valid_ranges[-1]["end"]) < 0.025:
+            if (
+                valid_ranges
+                and (s - valid_ranges[-1]["end"]) < 0.025
+                and abs(spd - valid_ranges[-1]["speed"]) < 0.02
+            ):
                 valid_ranges[-1]["end"] = max(valid_ranges[-1]["end"], e)
             else:
-                valid_ranges.append({"start": s, "end": e})
+                valid_ranges.append({"start": s, "end": e, "speed": spd})
 
         if not valid_ranges:
             return {"ok": False, "error": "empty_keep_ranges", "message": "Nenhum trecho restante para manter."}
 
-        # Check if the current timeline clips already match valid_ranges within 5ms tolerance
+        # Check if the current timeline clips already match valid_ranges (including speed) within 5ms tolerance
         if len(clips) == len(valid_ranges):
             already_synced = True
             for c, r in zip(clips, valid_ranges):
-                if abs(c["inPoint"] - r["start"]) > 0.006 or abs(c["outPoint"] - r["end"]) > 0.006:
+                c_spd = float(c.get("speed", 1.0) or 1.0)
+                if (
+                    abs(c["inPoint"] - r["start"]) > 0.006
+                    or abs(c["outPoint"] - r["end"]) > 0.006
+                    or abs(c_spd - r["speed"]) > 0.02
+                ):
                     already_synced = False
                     break
             if already_synced:
@@ -249,7 +259,7 @@ class DriftMCPClient:
                     "ok": True,
                     "unchanged": True,
                     "clips_count": len(clips),
-                    "message": "Timeline do Drift já está 100% sincronizada com os cortes atuais.",
+                    "message": "Timeline do Drift já está 100% sincronizada com os cortes e velocidades atuais.",
                 }
 
         ops: List[Dict[str, Any]] = [
@@ -261,13 +271,17 @@ class DriftMCPClient:
         for extra in reversed(extra_clips):
             ops.append({"tool": "delete_clip", "args": {"clip": extra["id"]}})
 
+        # Ensure primary_clip is at 1.0x speed before keep_ranges splits it
+        if abs(float(primary_clip.get("speed", 1.0) or 1.0) - 1.0) > 0.02:
+            ops.append({"tool": "set_clip_speed", "args": {"clip": primary_clip["id"], "speed": 1.0}})
+
         # Rebuild primary_clip using keep_ranges (preserves transform, volume, effects, and applies declick + ripple)
         ops.append(
             {
                 "tool": "keep_ranges",
                 "args": {
                     "clip": primary_clip["id"],
-                    "ranges": valid_ranges,
+                    "ranges": [{"start": r["start"], "end": r["end"]} for r in valid_ranges],
                     "declick": round(float(declick), 3),
                     "padding": 0.0,
                     "ripple": True,
@@ -276,4 +290,31 @@ class DriftMCPClient:
         )
 
         res = self.apply(ops, timeout=30.0)
+
+        # If any range has custom speed != 1.0, apply set_clip_speed + set_trim + move_clip on the created sub-clips
+        has_custom_speed = any(abs(r["speed"] - 1.0) > 0.02 for r in valid_ranges)
+        if has_custom_speed and res.get("ok") and res.get("done"):
+            kr_done = next((d.get("result", {}) for d in reversed(res["done"]) if d.get("tool") == "keep_ranges"), {})
+            created_clips = kr_done.get("clips", [])
+            if len(created_clips) == len(valid_ranges):
+                speed_ops: List[Dict[str, Any]] = []
+                tl_cursor = float(created_clips[0].get("start", 0.0))
+                need_reposition = False
+                for c_info, r in zip(created_clips, valid_ranges):
+                    cid = c_info.get("id")
+                    spd = min(4.0, max(0.25, float(r["speed"])))
+                    s_in = r["start"]
+                    s_out = r["end"]
+                    dur_i = (s_out - s_in) / spd
+                    if abs(spd - 1.0) > 0.02:
+                        speed_ops.append({"tool": "set_clip_speed", "args": {"clip": cid, "speed": spd}})
+                        speed_ops.append({"tool": "set_trim", "args": {"clip": cid, "in": s_in, "out": s_out}})
+                        need_reposition = True
+                    if need_reposition:
+                        speed_ops.append({"tool": "move_clip", "args": {"clip": cid, "at": round(tl_cursor, 4)}})
+                    tl_cursor += dur_i
+                if speed_ops:
+                    speed_res = self.apply(speed_ops, timeout=30.0)
+                    res["speed_sync"] = speed_res
+
         return res

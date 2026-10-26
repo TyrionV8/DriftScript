@@ -7,6 +7,7 @@ FastAPI Backend Server for DriftScript:
 - Provides HTTP 206 Partial Content video streaming (`/api/media`) for instant video seeking
 """
 
+import asyncio
 import hashlib
 import logging
 import mimetypes
@@ -87,6 +88,12 @@ class ProxyRequest(BaseModel):
 class RelevanceRequest(BaseModel):
     annotations: Optional[List[Dict[str, Any]]] = None
     clear: bool = False
+
+
+class SpeedWordsRequest(BaseModel):
+    indices: List[int]
+    speed: float = 1.5
+    sync_drift: Optional[bool] = None
 
 
 def get_or_create_video_proxy(file_path: Path, scale: int) -> Path:
@@ -268,7 +275,8 @@ async def api_transcribe(req: TranscribeRequest):
     if not file_path:
         raise HTTPException(status_code=400, detail="Nenhum arquivo de vídeo encontrado no Drift.")
 
-    tdata = transcribe_media(
+    tdata = await asyncio.to_thread(
+        transcribe_media,
         file_path=file_path,
         profile_id=req.profile,
         language=req.language,
@@ -279,6 +287,7 @@ async def api_transcribe(req: TranscribeRequest):
         asset_id=asset_id,
         source_duration=source_dur,
         drift_clips=drift_clips,
+        reset_session=req.force,
     )
 
 
@@ -296,6 +305,15 @@ async def api_words_relevance(req: RelevanceRequest):
     return state.set_words_relevance(
         annotations=req.annotations,
         clear=req.clear,
+    )
+
+
+@app.post("/api/words/speed")
+async def api_words_speed(req: SpeedWordsRequest):
+    return state.set_words_speed(
+        indices=req.indices,
+        speed=req.speed,
+        sync_drift=req.sync_drift,
     )
 
 
