@@ -23,6 +23,7 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
   height: 100vh;
   overflow: hidden;
+  user-select: none;
   -webkit-font-smoothing: antialiased;
 }
 

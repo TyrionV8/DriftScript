@@ -138,13 +138,22 @@ class TestSyncEngine(unittest.TestCase):
         self.assertEqual([t["word"] for t in g60], ["•", "(3.0s)", "•"])
 
     def test_detect_and_split_stretched_words(self):
-        rms = np.full(300, 0.15, dtype=np.float32)
-        words = [{"index": 0, "word": "é...", "start": 1.00, "end": 1.70}]
+        rms = np.full(400, 0.15, dtype=np.float32)
+        words = [
+            {"index": 0, "word": "é...", "start": 1.00, "end": 1.70},
+            {"index": 1, "word": "3.3V", "start": 2.00, "end": 3.14},
+            {"index": 2, "word": "SDR", "start": 3.20, "end": 3.85},
+        ]
         split = detect_and_split_stretched_words(words, rms)
-        self.assertEqual(len(split), 2)
+        self.assertEqual(len(split), 4)
         self.assertEqual(split[0]["kind"], "word")
         self.assertEqual(split[1]["kind"], "stretch")
         self.assertTrue(split[1]["word"].startswith("〰"))
+        # Numbers/units ('3.3V') and acronyms ('SDR') must never be split as stretched syllables
+        self.assertEqual(split[2]["word"], "3.3V")
+        self.assertFalse(split[2]["stretched"])
+        self.assertEqual(split[3]["word"], "SDR")
+        self.assertFalse(split[3]["stretched"])
 
 
 if __name__ == "__main__":

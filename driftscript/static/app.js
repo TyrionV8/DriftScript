@@ -604,6 +604,17 @@ window.addEventListener("keydown", (e) => {
     updateSelectionUI();
     return;
   }
+  // Ctrl+A / Cmd+A = Selecionar todo o texto da transcrição em vez da página HTML toda
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+    e.preventDefault();
+    state.selectedIndices.clear();
+    for (let i = 0; i < state.words.length; i++) {
+      state.selectedIndices.add(i);
+    }
+    updateSelectionUI();
+    showBanner(`Todos os ${state.words.length} itens da transcrição selecionados (Ctrl+A).`);
+    return;
+  }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
     e.preventDefault();
     if (e.shiftKey) el.btnRedo.click();

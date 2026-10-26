@@ -4,17 +4,22 @@ Utilitário CLI e cliente MCP para o DriftScript.
 Permite:
   - `status`: verificar memória (GPU VRAM / RAM / modelos Fast, Normal, Heavy) e conexão com o Drift
   - `chamar <ferramenta> [json_args]`: chamar qualquer ferramenta MCP do DriftScript diretamente
-  - `configurar-mcp`: registrar o servidor MCP `driftscript` no Antigravity (~/.gemini/config/mcp_config.json) com backup seguro
+  - `configurar-mcp`: registrar o servidor MCP `driftscript` no Antigravity, Claude Code e Codex com backup seguro
 """
 
 import json
+import os
+import re
 import shutil
 import sys
+import tempfile
 import time
+import tomllib
 import urllib.request
 from pathlib import Path
 
 MCP_URL = "http://127.0.0.1:4732/mcp"
+CABECALHO_TOML = re.compile(r"^\s*\[\[?\s*([^\]]+?)\s*\]\]?\s*(#.*)?$")
 
 
 def call_mcp(tool_name: str, args: dict) -> dict:
@@ -41,22 +46,102 @@ def call_mcp(tool_name: str, args: dict) -> dict:
     return data
 
 
-def configure_antigravity_mcp() -> None:
-    cfg_path = Path.home() / ".gemini" / "config" / "mcp_config.json"
-    if not cfg_path.exists():
-        print(f"[aviso] Arquivo {cfg_path} não encontrado.")
-        return
+def gravar_atomico(destino: Path, conteudo: str) -> Path | None:
+    """Grava o conteúdo no destino real (resolvendo links simbólicos) e gera backup com timestamp."""
+    real = destino.resolve()
+    real.parent.mkdir(parents=True, exist_ok=True)
+    backup = None
+    modo = 0o600
+    if real.exists():
+        modo = real.stat().st_mode & 0o777
+        backup = real.with_name(f"{real.name}.bak-driftscript-{time.strftime('%Y%m%d-%H%M%S')}")
+        shutil.copy2(real, backup)
+    fd, tmp = tempfile.mkstemp(dir=real.parent, prefix=f".{real.name}.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(conteudo)
+        os.chmod(tmp, modo)
+        os.replace(tmp, real)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+    return backup
 
-    backup = cfg_path.with_name(f"{cfg_path.name}.bak-driftscript-{int(time.time())}")
-    shutil.copy2(cfg_path, backup)
-    data = json.loads(cfg_path.read_text(encoding="utf-8"))
+
+def configure_antigravity() -> None:
+    cfg = Path.home() / ".gemini" / "config" / "mcp_config.json"
+    if not cfg.exists():
+        print(f"[aviso] Antigravity: {cfg} não encontrado.")
+        return
+    data = json.loads(cfg.read_text(encoding="utf-8") or "{}")
     servers = data.setdefault("mcpServers", {})
-    servers["driftscript"] = {
-        "url": MCP_URL,
-    }
-    cfg_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(f"[ok] Servidor MCP 'driftscript' ({MCP_URL}) registrado em {cfg_path}")
-    print(f"[ok] Backup preservado em {backup}")
+    if servers.get("driftscript", {}).get("url") == MCP_URL:
+        print(f"[ok] Antigravity: entrada 'driftscript' já correta em {cfg}")
+        return
+    servers["driftscript"] = {"url": MCP_URL}
+    backup = gravar_atomico(cfg, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    print(f"[alterado] Antigravity: entrada 'driftscript' configurada em {cfg}")
+    if backup:
+        print(f"           backup preservado em {backup}")
+
+
+def configure_claude() -> None:
+    base = os.environ.get("CLAUDE_CONFIG_DIR")
+    cfg = Path(base) / ".claude.json" if base else Path.home() / ".claude.json"
+    if not cfg.exists():
+        print(f"[aviso] Claude Code: {cfg} não encontrado.")
+        return
+    data = json.loads(cfg.read_text(encoding="utf-8") or "{}")
+    servers = data.setdefault("mcpServers", {})
+    entry = servers.get("driftscript", {})
+    if entry.get("url") == MCP_URL and entry.get("type") == "http":
+        print(f"[ok] Claude Code: entrada 'driftscript' já correta em {cfg}")
+        return
+    servers["driftscript"] = {"type": "http", "url": MCP_URL}
+    backup = gravar_atomico(cfg, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    print(f"[alterado] Claude Code: entrada 'driftscript' configurada em {cfg}")
+    if backup:
+        print(f"           backup preservado em {backup}")
+
+
+def configure_codex() -> None:
+    base = os.environ.get("CODEX_HOME")
+    cfg = (Path(base) if base else Path.home() / ".codex") / "config.toml"
+    if not cfg.exists():
+        print(f"[aviso] Codex: {cfg} não encontrado.")
+        return
+    texto = cfg.read_text(encoding="utf-8")
+    try:
+        dados = tomllib.loads(texto)
+        entrada = dados.get("mcp_servers", {}).get("driftscript")
+        if isinstance(entrada, dict) and entrada.get("url") == MCP_URL:
+            print(f"[ok] Codex: entrada 'driftscript' já correta em {cfg}")
+            return
+    except Exception:
+        pass
+
+    alvo = "mcp_servers.driftscript"
+    saida, pulando = [], False
+    for ln in texto.splitlines(keepends=True):
+        m = CABECALHO_TOML.match(ln)
+        if m:
+            nome = m.group(1).replace(" ", "").replace('"', "")
+            pulando = nome == alvo or nome.startswith(alvo + ".")
+        if not pulando:
+            saida.append(ln)
+    novo = "".join(saida).rstrip("\n")
+    bloco = f'\n\n[mcp_servers.driftscript]\nurl = "{MCP_URL}"\n'
+    backup = gravar_atomico(cfg, (novo + bloco).lstrip("\n"))
+    print(f"[alterado] Codex: entrada 'driftscript' configurada em {cfg}")
+    if backup:
+        print(f"           backup preservado em {backup}")
+
+
+def configure_all_mcp() -> None:
+    configure_antigravity()
+    configure_claude()
+    configure_codex()
 
 
 def main() -> int:
@@ -81,7 +166,7 @@ def main() -> int:
         return 0 if res.get("ok", True) else 1
 
     if cmd == "configurar-mcp":
-        configure_antigravity_mcp()
+        configure_all_mcp()
         return 0
 
     print(f"Comando desconhecido: {cmd}")

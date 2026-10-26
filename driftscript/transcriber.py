@@ -185,6 +185,20 @@ def tighten_word_bounds(words: List[Dict[str, Any]], rms_10ms: np.ndarray) -> Tu
         lead_silent_frames = int(active[0])
         trail_silent_frames = len(win) - 1 - int(active[-1])
 
+        # If a regular word (no digits/acronyms) has a long internal silence (>= 140ms) after the spoken core
+        # followed only by a brief breath/noise spike, cut before the silent gap so the pause becomes • tokens
+        raw_txt = str(w.get("word", "")).strip()
+        has_digit_or_acr = any(c.isdigit() for c in raw_txt) or (len(raw_txt) >= 2 and raw_txt.isupper())
+        if not has_digit_or_acr and (e - s) > 0.65 and len(active) >= 12:
+            gaps = np.diff(active)
+            big_gaps = np.where(gaps >= 14)[0]  # >= 140ms of continuous silence inside the word box
+            for g_idx in big_gaps:
+                speech_end_frame = int(active[g_idx])
+                if (speech_end_frame - int(active[0])) >= 14:  # at least 140ms of speech before the gap
+                    trail_silent_frames = len(win) - 1 - speech_end_frame
+                    active = active[: g_idx + 1]
+                    break
+
         changed = False
         # Trim if >= 70ms (7 frames) of pure silence was absorbed at the start or end of the word
         if lead_silent_frames >= 7:
@@ -239,25 +253,43 @@ def detect_and_split_stretched_words(
         e = float(w_copy.get("end", s + 0.1))
         dur = e - s
         raw_text = str(w_copy.get("word", "")).strip()
+
+        # Never treat numbers, decimals, technical units (e.g. '3.3V', '2,4835'), acronyms ('SDR', 'BLE'),
+        # or hyphenated/CamelCase technical terms ('Wi-Fi', 'LoRa') as stretched syllables:
+        # their text is short (3-4 chars) but they are pronounced as multiple words ('três ponto três volts'),
+        # and Wav2Vec2 packs the whole multi-word phrase into the single token.
+        letters_only = re.sub(r"[^a-zA-ZÀ-ÿ]", "", raw_text)
+        has_digits = any(ch.isdigit() for ch in raw_text)
+        upper_count = sum(1 for ch in letters_only if ch.isupper())
+        is_acronym_or_tech = (len(letters_only) >= 2 and upper_count >= 2) or ("-" in raw_text)
+        if has_digits or is_acronym_or_tech:
+            w_copy["stretched"] = False
+            out.append(w_copy)
+            continue
+
         clean = re.sub(r"[^\wÀ-ÿ]", "", raw_text.lower())
         n_chars = max(1, len(clean))
 
         # Expected normal speaking duration based on word length
         if n_chars <= 2:
-            normal_dur = 0.19
-            min_total_for_stretch = 0.36 if not raw_text.endswith("...") else 0.30
+            normal_dur = 0.20
+            min_total_for_stretch = 0.42 if not raw_text.endswith("...") else 0.32
         else:
-            normal_dur = max(0.24, min(0.62, n_chars * 0.072))
-            min_total_for_stretch = normal_dur + (0.16 if raw_text.endswith("...") else 0.22)
+            normal_dur = max(0.26, min(0.64, n_chars * 0.075))
+            min_total_for_stretch = normal_dur + (0.18 if raw_text.endswith("...") else 0.28)
 
         is_stretched = False
-        if dur >= min_total_for_stretch and (dur - normal_dur) >= 0.14:
+        if dur >= min_total_for_stretch and (dur - normal_dur) >= 0.18:
             if n_frames > 0:
                 f0 = max(0, min(n_frames - 1, int(round((s + normal_dur * 0.7) * 100))))
                 f1 = max(f0 + 1, min(n_frames, int(round(e * 100))))
                 tail_win = rms_10ms[f0:f1]
-                # Confirm sustained vocal energy in the stretched tail
-                if len(tail_win) > 0 and float(np.mean(tail_win >= vocal_floor)) >= 0.45:
+                # A true stretched syllable ('éeeeehhh', 'queeeee') has continuous vocal energy without silent gaps
+                if (
+                    len(tail_win) > 0
+                    and float(np.mean(tail_win >= vocal_floor)) >= 0.82
+                    and float(np.percentile(tail_win, 15)) >= vocal_floor * 0.75
+                ):
                     is_stretched = True
             else:
                 is_stretched = True
@@ -466,7 +498,7 @@ def _try_load_cached_transcript(file_path: Path, profile_id: str) -> Optional[Di
     """
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     sig = _file_signature(file_path)
-    own_cache = CACHE_DIR / f"{sig}_{profile_id}_v4.json"
+    own_cache = CACHE_DIR / f"{sig}_{profile_id}_v5.json"
 
     if own_cache.exists():
         try:
@@ -477,6 +509,52 @@ def _try_load_cached_transcript(file_path: Path, profile_id: str) -> Optional[Di
                 return data
         except Exception as e:
             logger.warning(f"Failed reading cache {own_cache}: {e}")
+
+    # Upgrade v4 cache if present (reconstructing raw spoken words before re-running v5 stretch & pause rules)
+    v4_cache = CACHE_DIR / f"{sig}_{profile_id}_v4.json"
+    if v4_cache.exists():
+        try:
+            with open(v4_cache, "r", encoding="utf-8") as f:
+                v4_data = json.load(f)
+            v4_words = v4_data.get("words", [])
+            if v4_words:
+                reconstructed = []
+                for tok in v4_words:
+                    kind = tok.get("kind", "word")
+                    if kind == "word":
+                        reconstructed.append(
+                            {
+                                "index": len(reconstructed),
+                                "kind": "word",
+                                "word": str(tok.get("word", "")).strip(),
+                                "start": round(float(tok.get("start", 0.0)), 3),
+                                "end": round(float(tok.get("end", 0.0)), 3),
+                                "confidence": round(float(tok.get("confidence", 0.85)), 3),
+                                "deleted": False,
+                            }
+                        )
+                    elif kind == "stretch" and reconstructed:
+                        reconstructed[-1]["end"] = round(float(tok.get("end", reconstructed[-1]["end"])), 3)
+                rms_10ms = get_or_compute_rms_10ms(file_path)
+                words_tight, n_fixed = tighten_word_bounds(reconstructed, rms_10ms)
+                words_with_stretch = detect_and_split_stretched_words(words_tight, rms_10ms)
+                tokens_with_pauses = inject_pause_tokens(words_with_stretch, min_pause_sec=0.10, dot_unit_sec=0.05)
+                segments = build_segments_and_pauses(tokens_with_pauses)
+                upgraded = {
+                    "file_path": str(file_path.resolve()),
+                    "profile": profile_id,
+                    "whisper_model": v4_data.get("whisper_model", WHISPER_PROFILES.get(profile_id, {}).get("whisper_model", "medium")),
+                    "language": v4_data.get("language", "pt"),
+                    "tightened_words_count": n_fixed,
+                    "timestamp": time.time(),
+                    "words": tokens_with_pauses,
+                    "segments": segments,
+                }
+                with open(own_cache, "w", encoding="utf-8") as f:
+                    json.dump(upgraded, f, ensure_ascii=False)
+                return upgraded
+        except Exception as e:
+            logger.warning(f"Failed upgrading v4 cache {v4_cache}: {e}")
 
     # Check legacy CutScript cache ONLY for models matching this specific profile
     profile = WHISPER_PROFILES.get(profile_id, WHISPER_PROFILES["normal"])
@@ -713,7 +791,7 @@ def transcribe_media(
 
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         sig = _file_signature(path)
-        own_cache = CACHE_DIR / f"{sig}_{profile_id}_v4.json"
+        own_cache = CACHE_DIR / f"{sig}_{profile_id}_v5.json"
         out_data = {
             "file_path": str(path),
             "profile": profile_id,
