@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DriftScript</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <!-- BARRA SUPERIOR ÚNICA E LIMPA -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <span id="drift-dot" class="status-dot dot-ok" title="Conectado ao Drift"></span>
+        <span class="brand-name">DriftScript</span>
+        <select id="asset-select" class="clip-select" title="Clipe aberto no Drift">
+          <option value="">Carregando clipe...</option>
+        </select>
+        <!-- Indicativo em destaque do Novo Comprimento do Vídeo -->
+        <div class="duration-pill" id="duration-pill" title="Novo comprimento estimado do vídeo após cortes">
+          <span>Novo comprimento:</span>
+          <strong id="new-duration-val">--:--</strong>
+          <small id="orig-duration-val">(de --:--)</small>
+        </div>
+      </div>
+
+      <!-- Seletor Whisper com Memória Visível (Persiste o último usado) -->
+      <div class="topbar-center">
+        <div class="whisper-pills" id="profile-selector">
+          <button type="button" class="w-pill" data-profile="fast" title="Whisper small (~1.2 GB de VRAM)">
+            Fast <small>1.2 GB</small>
+          </button>
+          <button type="button" class="w-pill active" data-profile="normal" title="Whisper medium (~2.8 GB de VRAM)">
+            Normal <small>2.8 GB</small>
+          </button>
+          <button type="button" class="w-pill" data-profile="heavy" title="Whisper large-v3 (~4.8 GB de VRAM)">
+            Heavy <small>4.8 GB</small>
+          </button>
+        </div>
+        <button id="btn-transcribe" type="button" class="btn-top btn-primary">Transcrever</button>
+      </div>
+
+      <!-- Memória GPU Visível + Prompt IA + Sync -->
+      <div class="topbar-right">
+        <button id="btn-copy-prompt" type="button" class="btn-top btn-agent" title="Copiar prompt com instruções para um agente de IA controlar a edição por chat">
+          📋 Copiar Prompt IA
+        </button>
+
+        <div class="vram-widget" title="Uso de memória de vídeo (GPU VRAM) em tempo real">
+          <div class="vram-text">
+            <span>VRAM:</span>
+            <strong id="vram-numbers">-- / -- GB</strong>
+          </div>
+          <div class="vram-track">
+            <div id="vram-bar-used" class="vram-fill" style="width: 0%"></div>
+            <div id="vram-bar-projected" class="vram-proj" style="width: 0%"></div>
+          </div>
+        </div>
+        <button id="btn-unload-vram" type="button" class="btn-top btn-ghost" title="Descarregar modelo da VRAM">Liberar</button>
+
+        <label class="sync-toggle" title="Aplicar cortes automaticamente na timeline do Drift">
+          <input type="checkbox" id="chk-auto-sync" checked />
+          <span>Auto-Sync</span>
+        </label>
+        <button id="btn-sync-now" type="button" class="btn-top btn-sync">Sincronizar</button>
+      </div>
+    </header>
+
+    <!-- ÁREA PRINCIPAL: TEXTO COM MARGEM JUSTA E SCROLL À ESQUERDA + VÍDEO GRANDE À DIREITA -->
+    <main class="main-split">
+      <!-- ESQUERDA: Documento de Texto Limpo (Estilo Descript) -->
+      <section class="doc-pane">
+        <div class="doc-toolbar">
+          <div class="doc-tools-left">
+            <button id="btn-undo" type="button" class="btn-doc" title="Desfazer (Ctrl+Z)" disabled>↶</button>
+            <button id="btn-redo" type="button" class="btn-doc" title="Refazer (Ctrl+Y)" disabled>↷</button>
+            <button id="btn-cut-selected" type="button" class="btn-doc btn-cut" title="Riscar selecionadas (Tecla Delete / Backspace)">
+              Riscar (<span id="sel-count">0</span>)
+            </button>
+            <button id="btn-restore-selected" type="button" class="btn-doc" title="Desriscar selecionadas (Barra de Espaço ou Botão Direito)">
+              Desriscar
+            </button>
+
+            <!-- SELECIONAR silêncios por faixa de comprimento (ou sílabas esticadas) -->
+            <div class="pause-cut-group" title="Selecionar silêncios na faixa de comprimento escolhida (depois pressione Delete para riscar ou Espaço para desriscar)">
+              <select id="select-pause-range" class="pause-select">
+                <option value="0.10-999">Silêncios ≥ 0.10s (Todos)</option>
+                <option value="0.10-0.30">Silêncios 0.10s – 0.30s (Curtos)</option>
+                <option value="0.30-0.65" selected>Silêncios 0.30s – 0.65s (Médios)</option>
+                <option value="0.60-999">Silêncios ≥ 0.60s (Com traço —)</option>
+                <option value="1.20-999">Silêncios ≥ 1.20s (Longos)</option>
+                <option value="2.15-999">Silêncios &gt; 4 traços (Tempo)</option>
+                <option value="stretch">Sílabas Esticadas (〰)</option>
+              </select>
+              <label class="keep-edges-label" title="Quando marcado, seleciona apenas o miolo do silêncio, preservando o primeiro e o último pontinho (•) como almofada natural">
+                <input type="checkbox" id="chk-keep-edge-dots" checked />
+                <span>Manter pontas •</span>
+              </label>
+              <button id="btn-select-pauses" type="button" class="btn-doc btn-select-range">Selecionar</button>
+            </div>
+
+            <label class="click-mode-label" title="Quando ativo, basta 1 clique esquerdo para riscar">
+              <input type="checkbox" id="chk-one-click-cut" />
+              <span>1-clique risca</span>
+            </label>
+          </div>
+
+          <div class="doc-tools-right">
+            <input type="text" id="search-input" class="search-minimal" placeholder="Buscar..." />
+            <button id="btn-select-search-matches" type="button" class="btn-doc hidden" title="Selecionar todas as ocorrências da busca">
+              Selecionar (<span id="search-count">0</span>)
+            </button>
+          </div>
+        </div>
+
+        <div id="status-banner" class="status-banner hidden"></div>
+
+        <!-- PÁGINA DE TEXTO COM MARGEM JUSTA E BARRA DE ROLAGEM GROSSA À ESQUERDA -->
+        <div id="transcript-container" class="doc-content" tabindex="0">
+          <p class="empty-msg">Carregando transcrição...</p>
+        </div>
+
+        <footer class="doc-footer">
+          <span id="stat-summary">0 palavras • 0 riscadas</span>
+          <span class="hint-text">
+            Clique: ir ao trecho • <kbd>Del</kbd>: riscar • <kbd>Espaço</kbd> ou <strong>Botão Direito</strong>: desriscar • Apague só alguns <kbd>•</kbd> / <kbd>—</kbd> para cortar parte do silêncio
+          </span>
+        </footer>
+      </section>
+
+      <!-- DIREITA: Player de Vídeo Grande -->
+      <section class="video-pane">
+        <div class="video-stage">
+          <video id="video-player" preload="metadata"></video>
+        </div>
+
+        <!-- Barra de Progresso Clicável -->
+        <div class="timeline-scrub" id="progress-bar">
+          <div id="progress-fill" class="timeline-fill"></div>
+        </div>
+
+        <!-- Controles do Player: Recomeçar do Zero, Play/Pause, 2x, Resolução (1x, 1/2, 1/4, 1/16), Tempo -->
+        <div class="video-controls">
+          <div class="vc-left">
+            <button id="btn-restart" type="button" class="btn-vc" title="Recomeçar a tocar o vídeo do zero">
+              ⏮ Do Zero
+            </button>
+            <button id="btn-play-pause" type="button" class="btn-vc btn-vc-primary" title="Play / Pause">
+              ▶ Play
+            </button>
+            <button id="btn-speed-2x" type="button" class="btn-vc btn-speed" title="Alternar velocidade 2x">
+              2x
+            </button>
+            <div class="res-pills" id="res-selector" title="Resolução da visualização (proxies leves com keyframes curtos para busca sem travar)">
+              <button type="button" class="r-pill active" data-scale="1">1x</button>
+              <button type="button" class="r-pill" data-scale="2">1/2</button>
+              <button type="button" class="r-pill" data-scale="4">1/4</button>
+              <button type="button" class="r-pill" data-scale="16">1/16</button>
+            </div>
+          </div>
+
+          <div class="vc-right">
+            <label class="skip-toggle" title="Pular automaticamente os trechos riscados durante a reprodução">
+              <input type="checkbox" id="chk-skip-deleted" checked />
+              <span>Pular riscadas</span>
+            </label>
+            <span id="time-display" class="timecode">00:00 / 00:00</span>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
