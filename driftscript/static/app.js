@@ -3,8 +3,13 @@
  * - Snug text layout with wide square left-side scrollbar
  * - Granular silence tokens: • (1 pontinho = 0.05s), — (1 traço = 10 pontinhos), • (tempo) • (> 4 traços)
  * - Stretched syllable tokens: 〰0.35s attached to dragged-out words
- * - Left-click only selects / deselects tokens
- * - Spacebar toggles the active mode (Riscar or Acelerar 2x/4x/8x/16x/32x) across the entire selection
+ * - Standard Text-Editor Selection & Cursor:
+ *   * 1x Click: places cursor & starts playing audio from that word (does not select)
+ *   * 2x Click: selects the word | 3x Click: selects the paragraph
+ *   * Click & Drag: continuous range selection
+ *   * Ctrl + Click / Drag: non-contiguous multi-selection
+ *   * Arrow keys & Shift + Arrows: cursor navigation and continuous selection adjustment
+ * - Spacebar toggles the active mode (Riscar or Acelerar 2x/4x) across the entire selection
  * - Normal Play plays only the selection in a continuous loop
  */
 
@@ -29,10 +34,18 @@ const state = {
   speedRanges: [],
   driftClips: [],
   selectedIndices: new Set(),
+  baseSelectedIndices: new Set(),
   anchorIndex: null,
-  isDraggingSelection: false,
-  dragAction: "select",
-  spaceEffect: "cut", // "cut" (Riscar) | "accel" (Acelerar)
+  caretIndex: null,
+  isMouseDown: false,
+  hasDragged: false,
+  mouseDownX: 0,
+  mouseDownY: 0,
+  mouseDownIdx: null,
+  mouseDownCtrl: false,
+  mouseDownShift: false,
+  singleClickTimer: null,
+  spaceEffect: "cut", // "cut" (Riscar) | "accel" (Acelerar 2x/4x)
   loopSelectionMode: false,
   isTranscribing: false,
   activeWordIndex: -1,
@@ -42,7 +55,6 @@ const state = {
   isSpeed2x: false,
   previewScale: 1,
   lastSkipWallMs: 0,
-  lastTickWallMs: 0,
 };
 
 const el = {
@@ -386,6 +398,7 @@ function renderTranscriptDOM() {
       if (state.selectedIndices.has(wIdx)) span.classList.add("is-selected");
       if (state.searchMatches.has(wIdx)) span.classList.add("is-match");
       if (wIdx === state.activeWordIndex) span.classList.add("is-active");
+      if (wIdx === state.caretIndex) span.classList.add("has-caret");
 
       p.appendChild(span);
     }
@@ -412,9 +425,18 @@ function updateSelectionUI() {
     const node = document.getElementById(`word-${idx}`);
     if (node) node.classList.add("is-selected");
   });
+
+  document.querySelectorAll(".word-tok.has-caret").forEach((node) => {
+    const idx = Number(node.dataset.index);
+    if (idx !== state.caretIndex) node.classList.remove("has-caret");
+  });
+  if (state.caretIndex !== null && state.caretIndex >= 0) {
+    const caretNode = document.getElementById(`word-${state.caretIndex}`);
+    if (caretNode) caretNode.classList.add("has-caret");
+  }
 }
 
-async function seekToWord(wordIndex) {
+async function seekToWord(wordIndex, autoPlay = false) {
   const w = state.words[wordIndex];
   if (!w) return;
 
@@ -422,6 +444,10 @@ async function seekToWord(wordIndex) {
 
   if (el.videoPlayer.src) {
     el.videoPlayer.currentTime = w.start;
+    if (autoPlay) {
+      state.loopSelectionMode = false;
+      el.videoPlayer.play().catch(() => {});
+    }
   }
   updatePlayheadUI(w.start);
 
@@ -457,7 +483,7 @@ async function setWordsSpeed(indices, speed) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       indices: Array.from(indices),
-      speed: Number(speed || 2.0),
+      speed: Math.min(4.0, Number(speed || 2.0)),
     }),
   });
   const data = await resp.json();
@@ -465,7 +491,7 @@ async function setWordsSpeed(indices, speed) {
 }
 
 /**
- * Alterna (toggle) o efeito selecionado para a Barra de Espaço ("cut" = Riscar ou "accel" = Acelerar)
+ * Alterna (toggle) o efeito selecionado para a Barra de Espaço ("cut" = Riscar ou "accel" = Acelerar 2x/4x)
  * em toda a seleção atual.
  */
 async function toggleSpaceEffectOnSelection() {
@@ -485,7 +511,7 @@ async function toggleSpaceEffectOnSelection() {
         : `↺ ${indices.length} itens desriscados na seleção.`
     );
   } else {
-    const targetSpd = Number(el.selectAccelSpeed.value || 2);
+    const targetSpd = Math.min(4.0, Number(el.selectAccelSpeed.value || 2));
     const allAtSpeed = indices.every((idx) => {
       const w = state.words[idx];
       return w && !w.deleted && Math.abs(Number(w.speed || 1.0) - targetSpd) < 0.05;
@@ -518,47 +544,251 @@ function updatePlayheadUI(srcTime) {
 }
 
 /**
- * Mouse & Keyboard events on the text editor:
- * - Left click on unselected token: selects it (adds to selection) and seeks player
- * - Left click on already-selected token: deselects it (removes from selection)
- * - Right click (contextmenu): DESRISCAR (restore) immediately
- * - Spacebar (Barra de Espaço): toggles active Spacebar mode (Riscar or Acelerar) across entire selection
+ * Localiza o índice da palavra/token mais próximo da coordenada (clientX, clientY),
+ * permitindo arrastar o mouse de forma contínua exatamente como num editor de texto.
+ */
+function findClosestWordIndexAtPoint(clientX, clientY) {
+  const hit = document.elementFromPoint(clientX, clientY);
+  const directTok = hit ? hit.closest(".word-tok") : null;
+  if (directTok) {
+    return Number(directTok.dataset.index);
+  }
+
+  const nodes = el.transcriptContainer.querySelectorAll(".word-tok");
+  if (!nodes.length) return null;
+
+  let bestIdx = null;
+  let bestLineDist = Infinity;
+  let bestHorizDist = Infinity;
+
+  for (let i = 0; i < nodes.length; i++) {
+    const r = nodes[i].getBoundingClientRect();
+    if (r.width === 0 && r.height === 0) continue;
+
+    let lineDist = 0;
+    if (clientY < r.top) lineDist = r.top - clientY;
+    else if (clientY > r.bottom) lineDist = clientY - r.bottom;
+
+    let horizDist = 0;
+    if (clientX < r.left) horizDist = r.left - clientX;
+    else if (clientX > r.right) horizDist = clientX - r.right;
+
+    if (lineDist < bestLineDist - 4 || (Math.abs(lineDist - bestLineDist) <= 4 && horizDist < bestHorizDist)) {
+      bestLineDist = lineDist;
+      bestHorizDist = horizDist;
+      bestIdx = Number(nodes[i].dataset.index);
+    }
+  }
+  return bestIdx;
+}
+
+/**
+ * Encontra o token na linha visual imediatamente acima (dir = -1) ou abaixo (dir = +1)
+ * para navegação vertical com Seta Cima / Seta Baixo e Shift + Seta.
+ */
+function findVerticalNeighborIndex(curIdx, dir) {
+  const curNode = document.getElementById(`word-${curIdx}`);
+  if (!curNode) return curIdx;
+  const curRect = curNode.getBoundingClientRect();
+  const targetX = curRect.left + curRect.width * 0.5;
+  const curMidY = curRect.top + curRect.height * 0.5;
+
+  const nodes = el.transcriptContainer.querySelectorAll(".word-tok");
+  let bestIdx = curIdx;
+  let bestLineY = null;
+  let bestXDist = Infinity;
+
+  for (let i = 0; i < nodes.length; i++) {
+    const r = nodes[i].getBoundingClientRect();
+    const midY = r.top + r.height * 0.5;
+    const dy = midY - curMidY;
+
+    if (dir < 0 && dy >= -6) continue; // Precisa estar numa linha acima
+    if (dir > 0 && dy <= 6) continue;  // Precisa estar numa linha abaixo
+
+    const absDy = Math.abs(dy);
+    if (bestLineY === null || absDy < bestLineY - 8) {
+      bestLineY = absDy;
+      bestXDist = Math.abs(r.left + r.width * 0.5 - targetX);
+      bestIdx = Number(nodes[i].dataset.index);
+    } else if (Math.abs(absDy - bestLineY) <= 8) {
+      const xDist = Math.abs(r.left + r.width * 0.5 - targetX);
+      if (xDist < bestXDist) {
+        bestXDist = xDist;
+        bestIdx = Number(nodes[i].dataset.index);
+      }
+    }
+  }
+  return bestIdx;
+}
+
+function applyContiguousSelection(anchor, focus, baseSet = null) {
+  const nextSet = baseSet ? new Set(baseSet) : new Set();
+  const a = Math.min(anchor, focus);
+  const b = Math.max(anchor, focus);
+  for (let k = a; k <= b; k++) {
+    nextSet.add(k);
+  }
+  state.selectedIndices = nextSet;
+  state.caretIndex = focus;
+  updateSelectionUI();
+}
+
+/**
+ * Mouse & Keyboard events on the text editor (Comportamento Padrão de Editor de Texto):
+ * - 1x Clique Esquerdo: NÃO seleciona por padrão; posiciona o cursor e começa a tocar o áudio a partir dali.
+ * - 2x Clique Esquerdo: seleciona a palavra clicada.
+ * - 3x Clique Esquerdo: seleciona o parágrafo inteiro.
+ * - Clicar e Arrastar: seleciona de forma contínua do ponto inicial até o ponto atual.
+ * - Segurar Ctrl + Clicar ou Arrastar: seleciona partes diferentes (seleção múltipla descontínua).
+ * - Setas e Shift + Setas: move o cursor ou expande/reduz a seleção contínua.
  */
 el.transcriptContainer.addEventListener("mousedown", (e) => {
   if (e.button === 2) return; // Botão direito tratado pelo contextmenu
+  el.transcriptContainer.focus();
 
-  const wordNode = e.target.closest(".word-tok");
-  if (!wordNode) {
-    if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
-      state.selectedIndices.clear();
-      updateSelectionUI();
+  const idx = findClosestWordIndexAtPoint(e.clientX, e.clientY);
+  if (idx === null) return;
+
+  const isCtrl = e.ctrlKey || e.metaKey;
+  const isShift = e.shiftKey;
+
+  // 3x Clique: seleciona o parágrafo inteiro
+  if (e.detail >= 3) {
+    if (state.singleClickTimer) {
+      clearTimeout(state.singleClickTimer);
+      state.singleClickTimer = null;
     }
+    el.videoPlayer.pause();
+    const seg = state.segments.find((s) => s.word_indices && s.word_indices.includes(idx));
+    if (!isCtrl) state.selectedIndices.clear();
+    if (seg && seg.word_indices.length > 0) {
+      for (const wi of seg.word_indices) state.selectedIndices.add(wi);
+      state.anchorIndex = seg.word_indices[0];
+      state.caretIndex = seg.word_indices[seg.word_indices.length - 1];
+    } else {
+      state.selectedIndices.add(idx);
+      state.anchorIndex = idx;
+      state.caretIndex = idx;
+    }
+    state.baseSelectedIndices = new Set(state.selectedIndices);
+    state.isMouseDown = false;
+    updateSelectionUI();
     return;
   }
 
-  const idx = Number(wordNode.dataset.index);
-
-  if (e.shiftKey && state.anchorIndex !== null) {
-    const a = Math.min(state.anchorIndex, idx);
-    const b = Math.max(state.anchorIndex, idx);
-    for (let k = a; k <= b; k++) state.selectedIndices.add(k);
-    state.dragAction = "select";
-    seekToWord(idx);
-  } else {
-    if (state.selectedIndices.has(idx)) {
-      // Clicar num item já selecionado deve desselecionar
-      state.selectedIndices.delete(idx);
-      state.dragAction = "deselect";
-    } else {
-      // Clicar num item não selecionado deve selecionar
-      state.selectedIndices.add(idx);
-      state.anchorIndex = idx;
-      state.dragAction = "select";
-      seekToWord(idx);
+  // 2x Clique: seleciona a palavra clicada (e eventual sílaba esticada 〰 anexada)
+  if (e.detail === 2) {
+    if (state.singleClickTimer) {
+      clearTimeout(state.singleClickTimer);
+      state.singleClickTimer = null;
     }
-    state.isDraggingSelection = true;
+    el.videoPlayer.pause();
+    if (!isCtrl) state.selectedIndices.clear();
+    state.selectedIndices.add(idx);
+    if (state.words[idx + 1]?.kind === "stretch") {
+      state.selectedIndices.add(idx + 1);
+    }
+    state.anchorIndex = idx;
+    state.caretIndex = idx;
+    state.baseSelectedIndices = new Set(state.selectedIndices);
+    state.isMouseDown = false;
+    updateSelectionUI();
+    seekToWord(idx, false);
+    return;
   }
-  updateSelectionUI();
+
+  // 1x Clique ou início de Clicar e Arrastar
+  state.isMouseDown = true;
+  state.hasDragged = false;
+  state.mouseDownX = e.clientX;
+  state.mouseDownY = e.clientY;
+  state.mouseDownIdx = idx;
+  state.mouseDownCtrl = isCtrl;
+  state.mouseDownShift = isShift;
+
+  if (isShift) {
+    const anchor = state.anchorIndex !== null ? state.anchorIndex : (state.caretIndex !== null ? state.caretIndex : idx);
+    state.anchorIndex = anchor;
+    applyContiguousSelection(anchor, idx, isCtrl ? state.baseSelectedIndices : null);
+  } else if (isCtrl) {
+    state.baseSelectedIndices = new Set(state.selectedIndices);
+    state.anchorIndex = idx;
+    state.caretIndex = idx;
+    updateSelectionUI();
+  } else {
+    state.baseSelectedIndices.clear();
+    state.anchorIndex = idx;
+    state.caretIndex = idx;
+    updateSelectionUI();
+  }
+});
+
+window.addEventListener("mousemove", (e) => {
+  if (!state.isMouseDown || state.anchorIndex === null) return;
+
+  const dx = e.clientX - state.mouseDownX;
+  const dy = e.clientY - state.mouseDownY;
+  const distSq = dx * dx + dy * dy;
+  const curIdx = findClosestWordIndexAtPoint(e.clientX, e.clientY);
+
+  if (!state.hasDragged && (distSq >= 25 || (curIdx !== null && curIdx !== state.mouseDownIdx))) {
+    state.hasDragged = true;
+    if (state.singleClickTimer) {
+      clearTimeout(state.singleClickTimer);
+      state.singleClickTimer = null;
+    }
+  }
+
+  if (state.hasDragged && curIdx !== null) {
+    applyContiguousSelection(
+      state.anchorIndex,
+      curIdx,
+      state.mouseDownCtrl ? state.baseSelectedIndices : null
+    );
+  }
+});
+
+window.addEventListener("mouseup", (e) => {
+  if (!state.isMouseDown) return;
+  const wasDrag = state.hasDragged;
+  const idx = state.mouseDownIdx;
+  const isCtrl = state.mouseDownCtrl;
+  const isShift = state.mouseDownShift;
+  state.isMouseDown = false;
+
+  if (wasDrag) {
+    state.baseSelectedIndices = new Set(state.selectedIndices);
+    return;
+  }
+
+  if (e.detail === 1 && idx !== null) {
+    if (isCtrl) {
+      // Ctrl + Clique alterna apenas a palavra clicada mantendo as outras partes selecionadas
+      if (state.selectedIndices.has(idx)) state.selectedIndices.delete(idx);
+      else state.selectedIndices.add(idx);
+      state.baseSelectedIndices = new Set(state.selectedIndices);
+      state.anchorIndex = idx;
+      state.caretIndex = idx;
+      updateSelectionUI();
+    } else if (isShift) {
+      // Shift + Clique seleciona continuamente do cursor/âncora até idx
+      state.baseSelectedIndices = new Set(state.selectedIndices);
+      seekToWord(idx, false);
+    } else {
+      // 1x Clique simples: NÃO seleciona, posiciona o cursor e começa a tocar o áudio a partir dali
+      state.selectedIndices.clear();
+      state.baseSelectedIndices.clear();
+      state.anchorIndex = idx;
+      state.caretIndex = idx;
+      updateSelectionUI();
+      if (state.singleClickTimer) clearTimeout(state.singleClickTimer);
+      state.singleClickTimer = setTimeout(() => {
+        state.singleClickTimer = null;
+        seekToWord(idx, true);
+      }, 170);
+    }
+  }
 });
 
 // Botão direito desrisca o item clicado ou toda a seleção atual
@@ -579,37 +809,77 @@ el.transcriptContainer.addEventListener("contextmenu", (e) => {
   }
 });
 
-el.transcriptContainer.addEventListener("mouseover", (e) => {
-  if (!state.isDraggingSelection) return;
-  const wordNode = e.target.closest(".word-tok");
-  if (!wordNode) return;
-  const idx = Number(wordNode.dataset.index);
-  if (state.dragAction === "deselect") {
-    state.selectedIndices.delete(idx);
-  } else {
-    state.selectedIndices.add(idx);
-  }
-  updateSelectionUI();
-});
-
-window.addEventListener("mouseup", () => {
-  state.isDraggingSelection = false;
-});
-
 window.addEventListener("keydown", (e) => {
   if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
 
   if (e.key === "Escape") {
     state.selectedIndices.clear();
+    state.baseSelectedIndices.clear();
     updateSelectionUI();
     return;
   }
+
+  // Navegação por cursor e seleção contínua com Setas / Shift + Setas (igual editor de texto)
+  if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(e.key) && state.words.length > 0) {
+    e.preventDefault();
+    const cur =
+      state.caretIndex !== null
+        ? state.caretIndex
+        : state.activeWordIndex >= 0
+        ? state.activeWordIndex
+        : 0;
+
+    let nextIdx = cur;
+    if (e.key === "ArrowLeft") {
+      if (!e.shiftKey && state.selectedIndices.size > 0) {
+        nextIdx = Math.min(...state.selectedIndices);
+      } else {
+        nextIdx = Math.max(0, cur - 1);
+      }
+    } else if (e.key === "ArrowRight") {
+      if (!e.shiftKey && state.selectedIndices.size > 0) {
+        nextIdx = Math.max(...state.selectedIndices);
+      } else {
+        nextIdx = Math.min(state.words.length - 1, cur + 1);
+      }
+    } else if (e.key === "ArrowUp") {
+      nextIdx = findVerticalNeighborIndex(cur, -1);
+    } else if (e.key === "ArrowDown") {
+      nextIdx = findVerticalNeighborIndex(cur, 1);
+    } else if (e.key === "Home") {
+      nextIdx = 0;
+    } else if (e.key === "End") {
+      nextIdx = state.words.length - 1;
+    }
+
+    if (e.shiftKey) {
+      if (state.anchorIndex === null) state.anchorIndex = cur;
+      applyContiguousSelection(state.anchorIndex, nextIdx, e.ctrlKey || e.metaKey ? state.baseSelectedIndices : null);
+    } else {
+      state.selectedIndices.clear();
+      state.baseSelectedIndices.clear();
+      state.anchorIndex = nextIdx;
+      state.caretIndex = nextIdx;
+      updateSelectionUI();
+    }
+
+    const node = document.getElementById(`word-${nextIdx}`);
+    if (node) node.scrollIntoView({ block: "nearest" });
+    seekToWord(nextIdx, false);
+    return;
+  }
+
   // Ctrl+A / Cmd+A = Selecionar todo o texto da transcrição em vez da página HTML toda
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
     e.preventDefault();
     state.selectedIndices.clear();
     for (let i = 0; i < state.words.length; i++) {
       state.selectedIndices.add(i);
+    }
+    state.baseSelectedIndices = new Set(state.selectedIndices);
+    if (state.words.length > 0) {
+      state.anchorIndex = 0;
+      state.caretIndex = state.words.length - 1;
     }
     updateSelectionUI();
     showBanner(`Todos os ${state.words.length} itens da transcrição selecionados (Ctrl+A).`);
@@ -643,15 +913,13 @@ window.addEventListener("keydown", (e) => {
 });
 
 /**
- * Video Player Sync, Selection Loop Playback, Restart from Zero, 2x Speed, Dynamic Segment Acceleration (2x..32x), and Resolution Switcher
+ * Video Player Sync, Selection Loop Playback, Restart from Zero, 2x Speed, Dynamic Segment Acceleration (2x/4x), and Resolution Switcher
  */
 function setupVideoPlayer() {
   const video = el.videoPlayer;
 
   const tick = () => {
     const nowMs = performance.now();
-    const dtSec = state.lastTickWallMs > 0 ? Math.min(0.1, (nowMs - state.lastTickWallMs) / 1000) : 0.016;
-    state.lastTickWallMs = nowMs;
 
     if (!video.paused && !video.seeking) {
       let t = video.currentTime;
@@ -674,7 +942,6 @@ function setupVideoPlayer() {
         for (const r of state.deletedRanges) {
           if (t >= r.start && t < r.end - 0.025) {
             state.lastSkipWallMs = nowMs;
-            // Se estiver em modo loop da seleção e o pulo sair da seleção, volta ao início da seleção
             if (state.loopSelectionMode && state.selectedIndices.size > 0) {
               const sel = getSelectionBounds();
               if (sel && r.end >= sel.playEnd - 0.015) {
@@ -690,28 +957,22 @@ function setupVideoPlayer() {
         }
       }
 
-      // Aplica aceleração dinâmica quando o playhead entra num trecho acelerado (2x, 4x, 8x, 16x, 32x)
+      // Aplica aceleração dinâmica quando o playhead entra num trecho acelerado (até 4x)
       const baseRate = state.isSpeed2x ? 2.0 : 1.0;
       let segMult = 1.0;
       for (const sr of state.speedRanges) {
         if (t >= sr.start && t < sr.end) {
-          segMult = Number(sr.speed || 1.0);
+          segMult = Math.min(4.0, Number(sr.speed || 1.0));
           break;
         }
       }
-      const desiredRate = Math.min(32.0, baseRate * segMult);
-      const nativeRate = Math.min(16.0, Math.max(0.25, desiredRate));
-      if (Math.abs(video.playbackRate - nativeRate) > 0.02) {
+      const targetRate = Math.min(8.0, Math.max(0.25, baseRate * segMult));
+      if (Math.abs(video.playbackRate - targetRate) > 0.02) {
         try {
-          video.playbackRate = nativeRate;
+          video.playbackRate = targetRate;
         } catch (err) {
-          // ignore browser playbackRate range limit
+          // ignore
         }
-      }
-      // Para 32x (acima do limite nativo de 16x do navegador), avança o tempo complementarmente
-      if (desiredRate > 16.0 && dtSec > 0) {
-        const extraStep = (desiredRate - nativeRate) * dtSec;
-        video.currentTime = Math.min(video.duration || state.sourceDuration || t + extraStep, t + extraStep);
       }
 
       updatePlayheadUI(video.currentTime);
@@ -883,7 +1144,7 @@ el.btnCopyPrompt.addEventListener("click", async () => {
     "   python3 /home/davi/repos/DriftScript/driftscript_cli.py chamar driftscript_analyze_fillers '{\"min_pause_sec\":0.4}'",
     "4. Riscar palavras/silêncios/esticadas por índice ou intervalo (sincroniza direto na timeline do Drift):",
     "   python3 /home/davi/repos/DriftScript/driftscript_cli.py chamar driftscript_cut_words '{\"indices\":[10,11],\"ranges\":[[20,25]],\"deleted\":true}'",
-    "5. Acelerar trechos (2x, 4x, 8x, 16x ou 32x) em vez de cortar:",
+    "5. Acelerar trechos (2x ou 4x) em vez de cortar:",
     "   python3 /home/davi/repos/DriftScript/driftscript_cli.py chamar driftscript_accelerate_words '{\"ranges\":[[30,45]],\"speed\":2.0}'",
     "6. Colorir o Medidor de Relevância (ou use a skill `analisar-relevancia-da-transcricao`):",
     "   python3 /home/davi/repos/DriftScript/driftscript_cli.py chamar driftscript_set_relevance '{\"annotations\":[{\"start_index\":0,\"end_index\":45,\"score\":0.95,\"category\":\"relevant\",\"reason\":\"Objetivo principal\"},{\"start_index\":46,\"end_index\":80,\"score\":0.0,\"category\":\"off_topic\",\"reason\":\"Desvio\"}]}'",
@@ -931,6 +1192,7 @@ el.btnTranscribe.addEventListener("click", async () => {
     });
     const data = await resp.json();
     state.selectedIndices.clear();
+    state.baseSelectedIndices.clear();
     applyTranscriptState(data);
     showBanner(`Transcrição (${state.selectedProfile.toUpperCase()}) refeita com sucesso!`);
   } catch (e) {
@@ -982,6 +1244,7 @@ el.btnRestoreSelected.addEventListener("click", () => {
 
 el.btnClearSelection.addEventListener("click", () => {
   state.selectedIndices.clear();
+  state.baseSelectedIndices.clear();
   updateSelectionUI();
 });
 
@@ -997,6 +1260,7 @@ el.btnSelectPauses.addEventListener("click", () => {
         state.selectedIndices.add(idx);
       }
     });
+    state.baseSelectedIndices = new Set(state.selectedIndices);
     updateSelectionUI();
     showBanner(`${state.selectedIndices.size} sílabas esticadas (〰) selecionadas. Pressione Espaço para aplicar o efeito ativo.`);
     return;
@@ -1010,6 +1274,7 @@ el.btnSelectPauses.addEventListener("click", () => {
         state.selectedIndices.add(idx);
       }
     });
+    state.baseSelectedIndices = new Set(state.selectedIndices);
     updateSelectionUI();
     showBanner(`${state.selectedIndices.size} tokens selecionados pelo Medidor de Relevância. Pressione Espaço para aplicar o efeito.`);
     return;
@@ -1043,6 +1308,7 @@ el.btnSelectPauses.addEventListener("click", () => {
     }
   }
 
+  state.baseSelectedIndices = new Set(state.selectedIndices);
   updateSelectionUI();
   showBanner(
     `${state.selectedIndices.size} partes de silêncio selecionadas (${groups.size} grupos). Pressione Espaço para alternar ${state.spaceEffect === "cut" ? "Riscar" : "Acelerar"}.`
@@ -1088,6 +1354,7 @@ el.searchInput.addEventListener("input", () => {
 el.btnSelectSearchMatches.addEventListener("click", () => {
   if (state.searchMatches.size > 0) {
     state.selectedIndices = new Set(state.searchMatches);
+    state.baseSelectedIndices = new Set(state.selectedIndices);
     updateSelectionUI();
     showBanner(`${state.selectedIndices.size} ocorrências selecionadas.`);
   }

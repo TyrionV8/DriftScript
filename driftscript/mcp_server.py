@@ -267,7 +267,7 @@ MCP_TOOLS_SCHEMA: List[Dict[str, Any]] = [
     {
         "name": "driftscript_accelerate_words",
         "description": (
-            "Accelerate (speed up: 2x, 4x, 8x, 16x, 32x) words, silences (`•`/`—`), or stretched syllables (`〰`) "
+            "Accelerate (speed up: 2x or 4x) words, silences (`•`/`—`), or stretched syllables (`〰`) "
             "by index or `[start_index, end_index]` ranges instead of cutting them, preserving video fluidity while shortening duration."
         ),
         "inputSchema": {
@@ -275,7 +275,7 @@ MCP_TOOLS_SCHEMA: List[Dict[str, Any]] = [
             "properties": {
                 "indices": {"type": "array", "items": {"type": "integer"}},
                 "ranges": {"type": "array", "items": {"type": "array", "items": {"type": "integer"}}},
-                "speed": {"type": "number", "default": 2.0, "description": "Playback multiplier (2, 4, 8, 16, 32, or 1.0 to reset)."},
+                "speed": {"type": "number", "default": 2.0, "description": "Playback multiplier (2.0, 4.0, or 1.0 to reset; max 4.0)."},
                 "sync_drift": {"type": "boolean", "default": True},
             },
         },

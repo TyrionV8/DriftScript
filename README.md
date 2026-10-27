@@ -23,7 +23,7 @@ O **DriftScript** transforma a edição de vídeo no **CutWire Drift** em uma ex
 Em vez de caçar ondas sonoras manualmente na timeline:
 - **Clique em qualquer palavra ou pausa** para posicionar instantaneamente o player e a agulha (*playhead*) do Drift.
 - **Riscar em vez de apagar**: palavras e silêncios cortados não somem do texto — ficam **riscados** (`line-through`) e podem ser ouvidos ou restaurados a qualquer momento.
-- **Acelerar em vez de cortar (`2x` a `32x`)**: mantenha a fluidez visual acelerando pausas ou explicações secundárias em vez de produzir cortes secos (*jump cuts*).
+- **Acelerar em vez de cortar (`2x` ou `4x`)**: mantenha a fluidez visual acelerando pausas ou explicações secundárias em vez de produzir cortes secos (*jump cuts*).
 - **Edição assistida por IA**: copie o prompt integrado com 1 clique ou conecte qualquer agente compatível com MCP (**Antigravity**, **Claude Code**, **Codex**, **Cursor**) para limpar vícios de linguagem, gaguejos, repetições e classificar a relevância de cada fala com código de cores.
 
 ---
@@ -63,17 +63,19 @@ flowchart LR
 
 ## ✨ Principais Recursos
 
-### 1. Edição Não-Destrutiva e Barra de Espaço Multimodal
+### 1. Edição Não-Destrutiva, Seleção Estilo Editor de Texto e Barra de Espaço Multimodal
 - **Palavras Riscadas**: nada é perdido ao cortar. O texto cortado permanece visível e riscado em vermelho, sendo pulado automaticamente durante a reprodução.
-- **Seleção Direta com Clique Esquerdo**:
-  - Clicar com o botão esquerdo sobre uma palavra ou pausa **seleciona** o item (e move o player para lá).
-  - Clicar sobre um item já selecionado **desseleciona** apenas ele.
-  - Arrastar com o botão esquerdo seleciona (ou desseleciona) múltiplos itens em sequência; `Ctrl+A` seleciona todo o texto da transcrição.
+- **Cursor e Seleção Estilo Editor de Texto**:
+  - **1x Clique Esquerdo**: posiciona o cursor (`|`) na palavra clicada e **começa a tocar o áudio imediatamente** a partir dali (sem selecionar por padrão).
+  - **2x Clique Esquerdo**: seleciona a palavra clicada; **3x Clique Esquerdo**: seleciona o parágrafo inteiro.
+  - **Clicar e Arrastar**: seleciona um bloco contínuo de texto entre o início e o fim do arrasto.
+  - **Segurar `Ctrl` + Clicar ou Arrastar**: seleciona partes diferentes de forma descontínua.
+  - **Setas e `Shift + Setas`**: move o cursor pelo texto ou expande/reduz a seleção contínua; `Ctrl+A` seleciona todo o texto da transcrição.
 - **Play em Loop na Seleção (`▶ Play` / `⏸ Loop`)**: quando há palavras ou pausas selecionadas, o botão **Play** toca exclusivamente o trecho selecionado em **loop contínuo**, permitindo avaliar o corte com precisão cirúrgica. O botão **`⏮ Do Zero`** toca o vídeo inteiro desde o início.
 - **Modo da Barra de Espaço Selecionável (`✂ Riscar` vs. `⚡ Acelerar`)**:
   - Escolha na barra de ferramentas qual ação será disparada pela **Barra de Espaço**:
     - **`✂ Riscar [Espaço]`**: alterna (*toggle*) toda a seleção entre **riscado** e **não riscado**.
-    - **`⚡ Acelerar [Espaço]`**: alterna (*toggle*) toda a seleção entre a velocidade escolhida (**`2x`, `4x`, `8x`, `16x` ou `32x`**) e a velocidade normal (**`1x`**).
+    - **`⚡ Acelerar [Espaço]`**: alterna (*toggle*) toda a seleção entre a velocidade escolhida (**`2x` ou `4x`**) e a velocidade normal (**`1x`**).
 - **Indicador de Novo Comprimento**: localizado logo abaixo do vídeo, exibe em tempo real a nova duração líquida do vídeo e o tempo total economizado com cortes e acelerações.
 
 ---
@@ -140,12 +142,13 @@ Para garantir que a pré-visualização nunca engasgue ao pular dezenas de micro
 
 | Atalho / Ação | Efeito no Editor |
 | :--- | :--- |
-| **Clique Esquerdo** *(em item não selecionado)* | Seleciona a palavra/pausa e posiciona o player + agulha do Drift no início dela. |
-| **Clique Esquerdo** *(em item já selecionado)* | Desseleciona o item clicado. |
-| **Arrastar com Botão Esquerdo** | Seleciona (ou desseleciona) continuamente os itens por onde o cursor passar. |
-| **`Shift + Clique Esquerdo`** | Seleciona todo o intervalo entre o último item clicado e o atual. |
+| **1x Clique Esquerdo** | Posiciona o cursor na palavra/pausa e **começa a tocar o áudio imediatamente** a partir dali (sem selecionar). |
+| **2x Clique Esquerdo** | Seleciona a palavra clicada (3x Clique seleciona o parágrafo inteiro). |
+| **Clicar e Arrastar** | Seleciona de forma contínua do ponto inicial até a posição atual do mouse. |
+| **`Ctrl + Clique` ou `Ctrl + Arrastar`** | Seleciona partes diferentes (seleção múltipla descontínua). |
+| **`Setas` / `Shift + Setas`** | Move o cursor pelo texto ou expande/reduz a seleção contínua a partir do cursor. |
 | **`Ctrl + A`** *(ou `Cmd + A`)* | Seleciona todo o texto da transcrição (sem selecionar o HTML da página). |
-| **`Espaço`** *(Barra de Espaço)* | **Alterna (*toggle*) o modo ativo** (`✂ Riscar` ou `⚡ Acelerar 2x..32x`) em toda a seleção atual (ou dá Play/Pause se nada estiver selecionado). |
+| **`Espaço`** *(Barra de Espaço)* | **Alterna (*toggle*) o modo ativo** (`✂ Riscar` ou `⚡ Acelerar 2x/4x`) em toda a seleção atual (ou dá Play/Pause se nada estiver selecionado). |
 | **Botão Direito do Mouse** | **Desrisca** imediatamente o item clicado ou toda a seleção atual. |
 | **`Delete` / `Backspace`** | **Risca** (`deleted = true`) todos os itens selecionados. |
 | **`Esc`** | Limpa a seleção atual. |
@@ -198,7 +201,7 @@ O DriftScript expõe **11 ferramentas MCP** (tanto via **HTTP POST JSON-RPC 2.0*
 | `driftscript_search_words` | Busca palavras/frases específicas e detecta automaticamente candidatos a corte: vícios de linguagem (*"é"*, *"hum"*, *"tipo"*, *"né"*), gaguejos/repetições imediatas e pausas longas. |
 | `driftscript_cut_words` | Risca (`deleted: true`) ou restaura (`deleted: false`) tokens por lista de `indices` ou intervalos `ranges` (`[[início, fim]]`) e sincroniza imediatamente a timeline do Drift. |
 | `driftscript_restore_words` | Desrisca tokens por `indices`, `ranges` ou `restore_all: true` e atualiza a timeline do Drift. |
-| `driftscript_accelerate_words` | Acelera (`speed`: `2`, `4`, `8`, `16`, `32` ou `1.0` para restaurar) palavras, silêncios ou sílabas esticadas por `indices` ou `ranges`. |
+| `driftscript_accelerate_words` | Acelera (`speed`: `2` ou `4`, ou `1.0` para restaurar) palavras, silêncios ou sílabas esticadas por `indices` ou `ranges`. |
 | `driftscript_set_relevance` | Colore o Medidor de Relevância atribuindo `score` (`0.0` vermelho → `0.5` amarelo → `1.0` verde) e `category` (`"relevant"` ou `"off_topic"` para azul) com justificativa (`reason`) em intervalos `[start_index, end_index]`. |
 | `driftscript_seek_word` | Move a agulha (*playhead*) do CutWire Drift e do player web para o tempo exato da palavra `word_index`. |
 | `driftscript_sync_drift` | Força a ressincronização imediata dos intervalos mantidos (`keep_ranges`) e velocidades com a timeline do CutWire Drift. |

@@ -527,12 +527,32 @@ body {
 }
 
 .word-tok {
+  position: relative;
   display: inline;
   padding: 1px 2px;
   margin: 0 0.5px;
   border-radius: 3px;
-  cursor: pointer;
+  cursor: text;
   transition: background 0.05s, color 0.05s;
+}
+
+/* Cursor de editor de texto (Caret) */
+.word-tok.has-caret::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: 1px;
+  bottom: 1px;
+  width: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+  animation: caret-blink 1s steps(2, start) infinite;
+  pointer-events: none;
+}
+
+@keyframes caret-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
 }
 
 .word-tok:hover {

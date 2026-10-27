@@ -302,18 +302,12 @@ class DriftMCPClient:
                 need_reposition = False
                 for c_info, r in zip(created_clips, valid_ranges):
                     cid = c_info.get("id")
-                    req_spd = max(0.25, float(r["speed"]))
-                    # CutWire Drift's set_clip_speed supports up to 4.0x natively;
-                    # for spoken segments > 4.0x (8x, 16x, 32x), apply 4.0x and scale the trim span
-                    # so the resulting timeline duration is exact `(s_out - s_in) / req_spd`.
-                    spd_for_drift = min(4.0, req_spd)
+                    spd = min(4.0, max(0.25, float(r["speed"])))
                     s_in = r["start"]
-                    orig_span = r["end"] - r["start"]
-                    target_tl_dur = orig_span / req_spd
-                    s_out = round(min(r["end"], s_in + target_tl_dur * spd_for_drift), 4)
-                    dur_i = (s_out - s_in) / spd_for_drift
-                    if abs(req_spd - 1.0) > 0.02:
-                        speed_ops.append({"tool": "set_clip_speed", "args": {"clip": cid, "speed": spd_for_drift}})
+                    s_out = r["end"]
+                    dur_i = (s_out - s_in) / spd
+                    if abs(spd - 1.0) > 0.02:
+                        speed_ops.append({"tool": "set_clip_speed", "args": {"clip": cid, "speed": spd}})
                         speed_ops.append({"tool": "set_trim", "args": {"clip": cid, "in": s_in, "out": s_out}})
                         need_reposition = True
                     if need_reposition:

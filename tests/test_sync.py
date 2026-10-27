@@ -155,20 +155,6 @@ class TestSyncEngine(unittest.TestCase):
         self.assertEqual(split[3]["word"], "SDR")
         self.assertFalse(split[3]["stretched"])
 
-    def test_accelerated_silences_and_stretches_exact_duration(self):
-        words = [
-            {"index": 0, "kind": "word", "word": "Olá", "start": 0.0, "end": 1.0, "deleted": False, "speed": 1.0},
-            {"index": 1, "kind": "pause", "pause_symbol": "—", "word": "—", "start": 1.0, "end": 1.8, "deleted": False, "speed": 8.0},
-            {"index": 2, "kind": "word", "word": "mundo", "start": 1.8, "end": 2.8, "deleted": False, "speed": 1.0},
-        ]
-        res = compute_keep_and_deleted_ranges(words, source_duration=2.8)
-        # 0.80s silence at 8x -> keeps 0.10s (0.05s on left + 0.05s on right) and cuts 0.70s (1.05..1.75)
-        self.assertEqual(len(res["deleted_ranges"]), 1)
-        self.assertAlmostEqual(res["deleted_ranges"][0]["start"], 1.05, places=3)
-        self.assertAlmostEqual(res["deleted_ranges"][0]["end"], 1.75, places=3)
-        total_kept = sum(r["end"] - r["start"] for r in res["keep_ranges"])
-        self.assertAlmostEqual(total_kept, 2.10, places=3)
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -305,51 +305,6 @@ def compute_keep_and_deleted_ranges(
                     }
                 )
 
-    # 2.5. Convert accelerated silence (`pause`) and stretched-syllable (`stretch`) runs into exact (1 - 1/speed) cuts
-    # so that 2x, 4x, 8x, 16x, and 32x reduce their duration to exact `D / speed` on the Drift timeline
-    # without hitting Drift's 4x `set_clip_speed` ceiling or fracturing the timeline into hundreds of micro-clips.
-    p_idx = 0
-    while p_idx < n:
-        w = words[p_idx]
-        spd = float(w.get("speed", 1.0) or 1.0)
-        kind = w.get("kind", "word")
-        if w.get("deleted", False) or spd <= 1.01 or kind not in ("pause", "stretch"):
-            p_idx += 1
-            continue
-        run_s = p_idx
-        while (
-            p_idx + 1 < n
-            and not words[p_idx + 1].get("deleted", False)
-            and words[p_idx + 1].get("kind", "word") == kind
-            and abs(float(words[p_idx + 1].get("speed", 1.0) or 1.0) - spd) < 0.05
-        ):
-            p_idx += 1
-        run_e = p_idx
-        t0 = float(words[run_s]["start"])
-        t1 = float(words[run_e]["end"])
-        span = t1 - t0
-        if span >= 0.04:
-            kept_span = span / spd
-            if kind == "stretch":
-                # Keep the first `span / spd` attached to the parent word, cut the trailing `span * (1 - 1/spd)`
-                c_start = t0 + kept_span
-                c_end = t1
-            else:
-                # For pauses, keep `kept_span / 2` on the left edge and `kept_span / 2` on the right edge
-                half_keep = kept_span * 0.5
-                c_start = t0 + half_keep
-                c_end = t1 - half_keep
-            if c_end - c_start >= 0.030:
-                raw_cuts.append(
-                    {
-                        "start": round(c_start, 4),
-                        "end": round(c_end, 4),
-                        "word_indices": list(range(run_s, run_e + 1)),
-                        "kind": f"accel_{kind}",
-                    }
-                )
-        p_idx += 1
-
     # 3. Sort and merge overlapping or nearly-touching (< 0.04s) cut intervals
     raw_cuts.sort(key=lambda r: (r["start"], r["end"]))
     merged_cuts: List[Dict[str, Any]] = []
@@ -375,21 +330,19 @@ def compute_keep_and_deleted_ranges(
     if dur - cursor >= 0.05:
         base_keep_ranges.append({"start": round(cursor, 4), "end": round(dur, 4), "speed": 1.0})
 
-    # 5. Collect accelerated non-deleted SPOKEN word runs (`kind == 'word'`, `speed > 1.01`)
-    # (Pauses and stretches are already shortened to exact `D / speed` via `raw_cuts` in step 2.5)
+    # 5. Collect accelerated non-deleted runs (`speed > 1.01`) and subdivide `base_keep_ranges`
     speed_ranges: List[Dict[str, Any]] = []
     j = 0
     while j < n:
         w = words[j]
         spd = float(w.get("speed", 1.0) or 1.0)
-        if w.get("deleted", False) or spd <= 1.01 or w.get("kind", "word") in ("pause", "stretch"):
+        if w.get("deleted", False) or spd <= 1.01:
             j += 1
             continue
         s_run_start = j
         while (
             j + 1 < n
             and not words[j + 1].get("deleted", False)
-            and words[j + 1].get("kind", "word") not in ("pause", "stretch")
             and abs(float(words[j + 1].get("speed", 1.0) or 1.0) - spd) < 0.05
         ):
             j += 1

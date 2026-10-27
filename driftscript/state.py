@@ -305,7 +305,7 @@ class DriftScriptState:
             return {"ok": False, "error": "no_transcript_loaded"}
 
         self._push_undo()
-        spd = round(max(0.5, min(32.0, float(speed or 1.0))), 2)
+        spd = round(max(0.5, min(4.0, float(speed or 1.0))), 2)
         idx_set = set(int(i) for i in indices if 0 <= int(i) < len(self.words))
         changed = 0
         for idx in idx_set:

@@ -74,16 +74,13 @@
               <button id="btn-cut-selected" type="button" class="btn-doc btn-cut space-mode-active" title="Selecionar 'Riscar' como efeito da Barra de Espaço (alterna entre riscado e não riscado em toda a seleção)">
                 ✂ Riscar <span class="space-tag" id="tag-space-cut">[Espaço]</span>
               </button>
-              <div class="accel-group" title="Selecionar 'Acelerar' como efeito da Barra de Espaço (2x, 4x, 8x, 16x ou 32x)">
+              <div class="accel-group" title="Selecionar 'Acelerar' como efeito da Barra de Espaço (2x ou 4x)">
                 <button id="btn-accel-selected" type="button" class="btn-doc btn-accel" title="Selecionar 'Acelerar' como efeito da Barra de Espaço">
                   ⚡ Acelerar <span class="space-tag hidden" id="tag-space-accel">[Espaço]</span>
                 </button>
-                <select id="select-accel-speed" class="pause-select" title="Velocidade de aceleração">
+                <select id="select-accel-speed" class="pause-select" title="Velocidade de aceleração (máx 4x)">
                   <option value="2" selected>2x</option>
                   <option value="4">4x</option>
-                  <option value="8">8x</option>
-                  <option value="16">16x</option>
-                  <option value="32">32x</option>
                 </select>
               </div>
             </div>
@@ -149,7 +146,7 @@
         <footer class="doc-footer">
           <span id="stat-summary">0 palavras • 0 riscadas</span>
           <span class="hint-text">
-            Clique Esq: seleciona/desseleciona • <kbd>Espaço</kbd>: alterna Riscar/Acelerar na seleção • <strong>▶ Play</strong>: toca a seleção em loop • <strong>Botão Direito</strong>: desrisca
+            1x Clique: tocar daqui • 2x Clique: seleciona palavra • Arrastar / <kbd>Shift+Setas</kbd>: seleção contínua • <kbd>Ctrl</kbd>: seleção múltipla • <kbd>Espaço</kbd>: Riscar/Acelerar
           </span>
         </footer>
       </section>
