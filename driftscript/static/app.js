@@ -388,10 +388,12 @@ function renderTranscriptDOM() {
         span.classList.add("is-accelerated");
         const prevIdx = k > 0 ? indices[k - 1] : -1;
         const prevW = prevIdx >= 0 ? state.words[prevIdx] : null;
-        if (!prevW || prevW.deleted || Math.abs(Number(prevW.speed || 1.0) - Number(w.speed)) > 0.05) {
+        const clampedSpd = Math.min(4.0, Number(w.speed || 1.0));
+        const prevSpd = prevW ? Math.min(4.0, Number(prevW.speed || 1.0)) : 1.0;
+        if (!prevW || prevW.deleted || Math.abs(prevSpd - clampedSpd) > 0.05) {
           const badge = document.createElement("span");
           badge.className = "accel-badge";
-          badge.textContent = `⚡${Number(w.speed)}x`;
+          badge.textContent = `⚡${clampedSpd}x`;
           span.prepend(badge);
         }
       }
@@ -490,40 +492,64 @@ async function setWordsSpeed(indices, speed) {
   applyTranscriptState(data);
 }
 
+function getTargetIndices() {
+  if (state.selectedIndices.size > 0) {
+    return Array.from(state.selectedIndices);
+  }
+  if (state.caretIndex !== null && state.caretIndex >= 0 && state.caretIndex < state.words.length) {
+    return [state.caretIndex];
+  }
+  return [];
+}
+
 /**
- * Alterna (toggle) o efeito selecionado para a Barra de Espaço ("cut" = Riscar ou "accel" = Acelerar 2x/4x)
- * em toda a seleção atual.
+ * Corta / Risca (atalho C, X, Delete ou Backspace)
  */
-async function toggleSpaceEffectOnSelection() {
-  if (state.selectedIndices.size === 0) {
-    el.btnPlayPause.click();
-    return;
+async function triggerCutAction() {
+  const indices = getTargetIndices();
+  if (!indices.length) return;
+  await setWordsDeleted(indices, true);
+  showBanner(`✂ ${indices.length} itens riscados [C].`);
+}
+
+/**
+ * Acelera (atalho A): aplica a velocidade escolhida e, se apertar A novamente na mesma seleção já acelerada,
+ * alterna entre 2x e 4x.
+ */
+async function triggerAccelerateAction() {
+  const indices = getTargetIndices();
+  if (!indices.length) return;
+
+  const allAt2x = indices.every((idx) => {
+    const w = state.words[idx];
+    return w && !w.deleted && Math.abs(Math.min(4.0, Number(w.speed || 1.0)) - 2.0) < 0.05;
+  });
+  const allAt4x = indices.every((idx) => {
+    const w = state.words[idx];
+    return w && !w.deleted && Math.abs(Math.min(4.0, Number(w.speed || 1.0)) - 4.0) < 0.05;
+  });
+
+  let nextSpd = Math.min(4.0, Number(el.selectAccelSpeed.value || 2.0));
+  if (allAt2x) {
+    nextSpd = 4.0;
+    if (el.selectAccelSpeed) el.selectAccelSpeed.value = "4";
+  } else if (allAt4x) {
+    nextSpd = 2.0;
+    if (el.selectAccelSpeed) el.selectAccelSpeed.value = "2";
   }
 
-  const indices = Array.from(state.selectedIndices);
-  if (state.spaceEffect === "cut") {
-    const allDeleted = indices.every((idx) => Boolean(state.words[idx]?.deleted));
-    const targetDeleted = !allDeleted;
-    await setWordsDeleted(indices, targetDeleted);
-    showBanner(
-      targetDeleted
-        ? `✂ ${indices.length} itens riscados na seleção.`
-        : `↺ ${indices.length} itens desriscados na seleção.`
-    );
-  } else {
-    const targetSpd = Math.min(4.0, Number(el.selectAccelSpeed.value || 2));
-    const allAtSpeed = indices.every((idx) => {
-      const w = state.words[idx];
-      return w && !w.deleted && Math.abs(Number(w.speed || 1.0) - targetSpd) < 0.05;
-    });
-    const newSpd = allAtSpeed ? 1.0 : targetSpd;
-    await setWordsSpeed(indices, newSpd);
-    showBanner(
-      newSpd > 1.01
-        ? `⚡ ${indices.length} itens acelerados em ${newSpd}x.`
-        : `↺ ${indices.length} itens restaurados para 1x.`
-    );
-  }
+  await setWordsSpeed(indices, nextSpd);
+  showBanner(`⚡ ${indices.length} itens acelerados em ${nextSpd}x [A].`);
+}
+
+/**
+ * Desrisca / Restaura para 1x (atalho D ou R)
+ */
+async function triggerRestoreAction() {
+  const indices = getTargetIndices();
+  if (!indices.length) return;
+  await setWordsDeleted(indices, false);
+  showBanner(`↺ ${indices.length} itens desriscados e restaurados para 1x [D].`);
 }
 
 function updatePlayheadUI(srcTime) {
@@ -898,16 +924,35 @@ window.addEventListener("keydown", (e) => {
   }
   // Delete ou Backspace = RISCAR selecionados
   if (e.key === "Delete" || e.key === "Backspace") {
-    if (state.selectedIndices.size > 0) {
-      e.preventDefault();
-      setWordsDeleted(Array.from(state.selectedIndices), true);
-    }
+    e.preventDefault();
+    triggerCutAction();
     return;
   }
-  // Barra de Espaço = Alterna o efeito ativo (Riscar ou Acelerar) em toda a seleção
+
+  // Atalhos de letras (sem Ctrl/Meta/Alt): C/X = Riscar, A = Acelerar (alterna 2x ⇄ 4x), D/R = Desriscar
+  if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+    const keyLower = e.key.toLowerCase();
+    if (keyLower === "c" || keyLower === "x") {
+      e.preventDefault();
+      triggerCutAction();
+      return;
+    }
+    if (keyLower === "a") {
+      e.preventDefault();
+      triggerAccelerateAction();
+      return;
+    }
+    if (keyLower === "d" || keyLower === "r") {
+      e.preventDefault();
+      triggerRestoreAction();
+      return;
+    }
+  }
+
+  // Barra de Espaço = Play / Pause
   if (e.key === " " || e.code === "Space") {
     e.preventDefault();
-    toggleSpaceEffectOnSelection();
+    el.btnPlayPause.click();
     return;
   }
 });
@@ -1218,28 +1263,26 @@ el.chkAutoSync.addEventListener("change", async () => {
   });
 });
 
-// Selecionar o botão de Riscar ou o de Acelerar para ser o efeito da Barra de Espaço
+// Botões de Riscar [C], Acelerar [A] (alterna 2x ⇄ 4x) e Desriscar [D]
 el.btnCutSelected.addEventListener("click", () => {
-  setSpaceEffect("cut");
-  showBanner("Barra de Espaço configurada para: ✂ Riscar / Desriscar toda a seleção.");
+  triggerCutAction();
 });
 
 el.btnAccelSelected.addEventListener("click", () => {
-  setSpaceEffect("accel");
-  const spd = Number(el.selectAccelSpeed.value || 2);
-  showBanner(`Barra de Espaço configurada para: ⚡ Acelerar (${spd}x) / Normal (1x) em toda a seleção.`);
+  triggerAccelerateAction();
 });
 
-el.selectAccelSpeed.addEventListener("change", () => {
-  setSpaceEffect("accel");
-  const spd = Number(el.selectAccelSpeed.value || 2);
-  showBanner(`Barra de Espaço configurada para: ⚡ Acelerar (${spd}x) / Normal (1x) em toda a seleção.`);
+el.selectAccelSpeed.addEventListener("change", async () => {
+  const spd = Math.min(4.0, Number(el.selectAccelSpeed.value || 2));
+  const indices = getTargetIndices();
+  if (indices.length > 0) {
+    await setWordsSpeed(indices, spd);
+    showBanner(`⚡ ${indices.length} itens acelerados em ${spd}x.`);
+  }
 });
 
 el.btnRestoreSelected.addEventListener("click", () => {
-  if (state.selectedIndices.size === 0) return;
-  setWordsDeleted(Array.from(state.selectedIndices), false);
-  showBanner(`↺ ${state.selectedIndices.size} itens desriscados e restaurados para 1x.`);
+  triggerRestoreAction();
 });
 
 el.btnClearSelection.addEventListener("click", () => {

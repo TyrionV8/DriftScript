@@ -536,13 +536,14 @@ body {
   transition: background 0.05s, color 0.05s;
 }
 
-/* Cursor de editor de texto (Caret) */
+/* Cursor de editor de texto (Caret com tamanho fixo independente do texto ao redor) */
 .word-tok.has-caret::before {
   content: "";
   position: absolute;
   left: -1px;
-  top: 1px;
-  bottom: 1px;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 18px;
   width: 2px;
   background: var(--accent);
   box-shadow: 0 0 6px var(--accent);

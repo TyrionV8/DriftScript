@@ -148,9 +148,10 @@ Para garantir que a pré-visualização nunca engasgue ao pular dezenas de micro
 | **`Ctrl + Clique` ou `Ctrl + Arrastar`** | Seleciona partes diferentes (seleção múltipla descontínua). |
 | **`Setas` / `Shift + Setas`** | Move o cursor pelo texto ou expande/reduz a seleção contínua a partir do cursor. |
 | **`Ctrl + A`** *(ou `Cmd + A`)* | Seleciona todo o texto da transcrição (sem selecionar o HTML da página). |
-| **`Espaço`** *(Barra de Espaço)* | **Alterna (*toggle*) o modo ativo** (`✂ Riscar` ou `⚡ Acelerar 2x/4x`) em toda a seleção atual (ou dá Play/Pause se nada estiver selecionado). |
-| **Botão Direito do Mouse** | **Desrisca** imediatamente o item clicado ou toda a seleção atual. |
-| **`Delete` / `Backspace`** | **Risca** (`deleted = true`) todos os itens selecionados. |
+| **`C`** *(ou `Delete` / `Backspace`)* | **Corta / Risca** (`deleted = true`) a seleção atual (ou o item sob o cursor). |
+| **`A`** | **Acelera** a seleção atual (`2x` ou `4x`). **Apertar `A` novamente alterna entre `2x ⇄ 4x`**. |
+| **`D`** *(ou Botão Direito)* | **Desrisca** e restaura para `1x` a seleção atual (ou o item clicado). |
+| **`Espaço`** *(Barra de Espaço)* | **Play / Pause** da reprodução. |
 | **`Esc`** | Limpa a seleção atual. |
 | **`Ctrl + Z` / `Ctrl + Y`** | Desfaz / Refaz a última alteração de corte ou velocidade. |
 | **`▶ Play`** *(com seleção ativa)* | Toca **apenas a seleção atual em loop contínuo** (`⏸ Loop`). |

@@ -164,7 +164,7 @@ class DriftScriptState:
             spd_map = data.get("speed_map", {})
             for w in self.words:
                 w["deleted"] = w["index"] in del_set
-                w["speed"] = float(spd_map.get(str(w["index"]), 1.0))
+                w["speed"] = min(4.0, max(0.5, float(spd_map.get(str(w["index"]), 1.0))))
                 rel = rel_map.get(str(w["index"]))
                 if rel:
                     w["relevance_score"] = rel.get("score")
@@ -233,7 +233,7 @@ class DriftScriptState:
                     if saved_del or spd_map:
                         for w in self.words:
                             w["deleted"] = w["index"] in saved_del
-                            w["speed"] = float(spd_map.get(str(w["index"]), 1.0))
+                            w["speed"] = min(4.0, max(0.5, float(spd_map.get(str(w["index"]), 1.0))))
                         self.deleted_pauses = saved.get("deleted_pauses", [])
                         restored_from_session = True
                     if rel_map:
