@@ -1,8 +1,8 @@
 # DriftScript ✂️🎬
 
 <p align="center">
-  <strong>Editor de vídeo baseado em texto (estilo <em>Descript</em>) e servidor MCP para o CutWire Drift</strong><br/>
-  <em>Corte, acelere, encurte silêncios e filtre relevância com IA editando o vídeo como se fosse um documento de texto.</em>
+  <strong>Editor de vídeo baseado em texto (estilo <em>Descript</em>) e servidor MCP (*Model Context Protocol*) para o CutWire Drift</strong><br/>
+  <em>Corte, acelere, encurte silêncios e filtre relevância com IA (Inteligência Artificial) editando o vídeo como se fosse um documento de texto.</em>
 </p>
 
 <p align="center">
@@ -29,6 +29,11 @@ Em vez de caçar ondas sonoras manualmente na timeline:
 ---
 
 ## 🏗️ Arquitetura e Fluxo de Sincronização
+
+A arquitetura do DriftScript divide o processamento entre a placa de vídeo (**GPU**, *Graphics Processing Unit*), o servidor local e o editor CutWire Drift:
+- **Processamento de Áudio e Vídeo na GPU**: O alinhamento fonético (WhisperX + Wav2Vec2) e a análise acústica por **RMS (*Root Mean Square*, valor quadrático médio da amplitude do sinal)** calculam a curva de energia em janelas de 10 ms para identificar vales silenciosos ideais para cortes sem estalo sonoro (*declick*). A geração acelerada de vídeos de pré-visualização leve (*proxies*) utiliza o decodificador por hardware **NVDEC (*NVIDIA Video Decoder*)**.
+- **Servidor e Sincronização Bidirecional**: Mantém o estado da sessão, histórico de ações (*Undo/Redo*) e converte posições temporais entre o arquivo original de gravação e a timeline do editor.
+- **Comunicação com Agentes e Timeline**: Agentes externos conectam-se via protocolo **MCP (*Model Context Protocol*)**, e as operações na timeline do CutWire Drift são orquestradas via chamadas **JSON-RPC (*JavaScript Object Notation - Remote Procedure Call*)**.
 
 ```mermaid
 flowchart LR
@@ -96,7 +101,7 @@ Inspirado no controle fino de pausas do *Descript*, mas com granularidade total 
 
 ### 3. Detecção Acústica de Sílabas Esticadas (`〰`)
 Quando o locutor estica uma vogal ou nasalização enquanto pensa no que vai dizer (*"éeeeehhh"*, *"queeeee"*, *"vamooooosss"*):
-- O motor acústico analisa a sustentação contínua de energia vocal em janelas de `10 ms` após a duração fonética normal da palavra.
+- O motor acústico analisa a sustentação contínua de energia vocal (calculada via **RMS — *Root Mean Square*, ou valor quadrático médio**) em janelas de `10 ms` após a duração fonética normal da palavra.
 - A parte esticada é separada em um token anexado **`〰0.35s`** (`kind: "stretch"`).
 - Ao riscar ou acelerar apenas o token **`〰`**, você **encurta a sílaba esticada** preservando a pronúncia natural da palavra original!
 - **Proteção contra falsos positivos técnicos**: números, decimais, unidades de medida (`3.3V`, `2,4835`), siglas em maiúsculas (`SDR`, `BLE`, `MHz`) e termos compostos (`Wi-Fi`) possuem pronúncia falada muito mais longa do que sua grafia curta (*"3.3V"* = *"três ponto três volts"*) e são automaticamente protegidos para nunca serem divididos como sílabas esticadas.
@@ -121,20 +126,20 @@ Após a análise da IA, você pode usar o seletor rápido da barra de ferramenta
 
 | Perfil | Modelo Whisper | VRAM Estimada | Indicação de Uso |
 | :--- | :--- | :--- | :--- |
-| **Fast** | `small` | **`~1.2 GB`** | Rascunhos rápidos e máquinas com pouca VRAM livre. |
+| **Fast** | `small` | **`~1.2 GB`** | Rascunhos rápidos e placas com pouca VRAM livre. |
 | **Normal** | `medium` | **`~2.8 GB`** | Equilíbrio ideal entre velocidade e precisão em português e inglês. |
 | **Heavy** | `large-v3` | **`~4.8 GB`** | Máxima precisão para jargões técnicos, siglas e fala acelerada. |
 
 - **Persistência Automática**: o último perfil escolhido (`Fast`, `Normal` ou `Heavy`) é salvo automaticamente como padrão para as próximas sessões.
-- **Monitor de VRAM ao Vivo**: exibe no topo o consumo atual da placa de vídeo (`usado / total GB`), a barra de projeção de memória do perfil selecionado e o botão **Liberar** para descarregar o modelo da VRAM após transcrever.
-- **Zero Dependência de AVX2 na CPU**: prioriza sempre a placa de vídeo via **CUDA (`float16`)** e evita instruções vetoriais `AVX2` na CPU, rodando perfeitamente em processadores como **Intel Xeon E5-2696 v2 (Ivy Bridge)** e similares.
+- **Monitor de VRAM (*Video Random Access Memory*, memória de vídeo dedicada) ao Vivo**: exibe no topo o consumo atual da placa gráfica (`usado / total GB`), a barra de projeção de memória do perfil selecionado e o botão **Liberar** para descarregar o modelo da VRAM após transcrever.
+- **Zero Dependência de AVX2 na CPU (*Central Processing Unit*)**: prioriza sempre a placa de vídeo via **CUDA (*Compute Unified Device Architecture*, em precisão `float16`)** e dispensa o conjunto de instruções vetoriais **AVX2 (*Advanced Vector Extensions 2*)** na CPU, rodando perfeitamente tanto em arquiteturas modernas quanto em processadores legados de alta contagem de núcleos como **Intel Xeon E5-2696 v2 (Ivy Bridge)** e similares.
 
 ---
 
 ### 6. Visualização Fluida em Baixa Resolução (`1x`, `1/2`, `1/4`, `1/16`)
 Para garantir que a pré-visualização nunca engasgue ao pular dezenas de microcortes em vídeos longos ou de alta taxa de bits:
 - Alterne a qualquer momento entre **`1x`** (original), **`1/2`**, **`1/4`** e **`1/16`** da resolução.
-- Os proxies são gerados automaticamente com decodificação via hardware (**NVDEC `-hwaccel cuda`**) e *keyframes* ultracurtos (`-g 4 -tune fastdecode`), permitindo buscas (`seek`) instantâneas no navegador.
+- Os proxies são gerados automaticamente com decodificação por hardware via **NVDEC (*NVIDIA Video Decoder*, com aceleração `-hwaccel cuda`)** e quadros-chave (*keyframes*) ultracurtos (`-g 4 -tune fastdecode`), permitindo buscas (*seek*) instantâneas no navegador.
 
 ---
 
@@ -191,11 +196,11 @@ python3 driftscript_cli.py configurar-mcp
 
 ## 🤖 Ferramentas MCP Disponíveis (`http://127.0.0.1:4732/mcp`)
 
-O DriftScript expõe **11 ferramentas MCP** (tanto via **HTTP POST JSON-RPC 2.0** em `http://127.0.0.1:4732/mcp` quanto via **`stdio`** com `python -m driftscript.mcp_server`):
+O DriftScript expõe **11 ferramentas MCP** (tanto via **HTTP POST JSON-RPC 2.0 (*JavaScript Object Notation - Remote Procedure Call*)** em `http://127.0.0.1:4732/mcp` quanto via **`stdio`** (*standard input/output*, entrada e saída padrão do terminal) com `python -m driftscript.mcp_server`):
 
 | Ferramenta MCP | Descrição |
 | :--- | :--- |
-| `driftscript_memory_status` | Retorna o uso de VRAM da GPU, RAM, capacidades da CPU (AVX/AVX2), perfil carregado e estimativas dos modos `fast`, `normal` e `heavy` (ou descarrega a VRAM com `unload: true`). |
+| `driftscript_memory_status` | Retorna o uso de VRAM da GPU, memória RAM (*Random Access Memory*), capacidades da CPU (AVX/AVX2), perfil carregado e estimativas dos modos `fast`, `normal` e `heavy` (ou descarrega a VRAM com `unload: true`). |
 | `driftscript_list_clips` | Lista todos os assets de vídeo e clipes presentes na timeline aberta do CutWire Drift. |
 | `driftscript_transcribe` | Transcreve um vídeo no perfil escolhido (`fast`, `normal`, `heavy`), aplicando alinhamento fonético, ajuste acústico RMS (10ms), separação de sílabas esticadas (`〰`) e silêncios granulares (`•`, `—`). |
 | `driftscript_get_transcript` | Retorna a transcrição indexada palavra por palavra (`[idx] palavra`, `[idx] ~palavra~` quando riscada, `[idx] ⚡2x palavra` quando acelerada), além de estatísticas de duração. |
@@ -207,7 +212,7 @@ O DriftScript expõe **11 ferramentas MCP** (tanto via **HTTP POST JSON-RPC 2.0*
 | `driftscript_seek_word` | Move a agulha (*playhead*) do CutWire Drift e do player web para o tempo exato da palavra `word_index`. |
 | `driftscript_sync_drift` | Força a ressincronização imediata dos intervalos mantidos (`keep_ranges`) e velocidades com a timeline do CutWire Drift. |
 
-### Exemplos de Uso via CLI (`driftscript_cli.py`)
+### Exemplos de Uso via CLI (*Command-Line Interface* — `driftscript_cli.py`)
 
 ```bash
 # 1. Verificar status da GPU VRAM e conexão com o CutWire Drift
